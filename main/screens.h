@@ -49,8 +49,9 @@ void screen_draw_timer(const screen_timer_t *timer, uint32_t now_ms, Pixel out[D
 uint32_t screen_transition_ms(void);
 void screen_draw_transition(const Pixel from[DISPLAY_PIXELS], const Pixel to[DISPLAY_PIXELS], uint32_t elapsed_ms, uint32_t seed, Pixel out[DISPLAY_PIXELS]);
 
-// Scrolling text in a 3x5 font: A-Z (lowercase shown as capitals), digits and
-// common punctuation; anything else, including non-ASCII, shows as '?'.
+// Scrolling text in a 5-row font: Latin and Russian letters (lowercase shown
+// as capitals), digits, common punctuation and the degree sign; anything else
+// shows as '?'.
 #define TEXT_ROW 2         // glyph rows 2-6, vertically centred
 #define TEXT_STEP_MS 70    // one column per step
 int screen_text_width(const char *text);

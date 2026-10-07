@@ -33,8 +33,9 @@ can be turned off on the web page.
 **Messages** scroll across the screen, for example from CI or Home Assistant:
 `POST /api/v1/notify` with `{"text": "Build passed", "color": "#00ff00", "repeat": 2,
 "sound": true}` (color, repeat and sound are optional), `badge say "Build passed"`, or
-the Message box on the web page. The font covers A-Z (lowercase is shown in
-capitals), digits and common punctuation; other characters show as `?`. Messages
+the Message box on the web page. The font covers Latin and Russian letters
+(lowercase is shown in capitals), digits, common punctuation and `°`; other
+characters show as `?`. Messages
 follow the screen switch and night mode, like the screens.
 
 **Night mode** dims the LEDs, or switches them off, between two times (for

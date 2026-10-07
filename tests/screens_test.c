@@ -212,7 +212,28 @@ int main(int argc, char **argv) {
     CHECK(screen_text_width("Hi!") == 9);      // lowercase is drawn as capitals; '!' is 1 wide
     CHECK(screen_text_width("") == 0);
     CHECK(screen_text_width("7\xc2\xb0") == 6); // "7°": the degree sign is 2 wide
-    CHECK(screen_text_width("\xd0\x9f") == 3);  // Cyrillic "П" becomes one '?'
+    CHECK(screen_text_width("\xd0\x9f") == 3);  // Cyrillic "П"
+    CHECK(screen_text_width("\xd0\xb6") == 5);  // lowercase "ж" is drawn as a 5-wide "Ж"
+    CHECK(screen_text_width("\xce\xa9") == 3);  // Greek "Ω" becomes '?'
+    CHECK(screen_text_width("\xff") == 3);       // a stray byte becomes '?'
+    // "ПРИВЕТ": 3 + 3 + 4 + 3 + 3 + 3 columns plus 5 gaps.
+    CHECK(screen_text_width("\xd0\x9f\xd0\xa0\xd0\x98\xd0\x92\xd0\x95\xd0\xa2") == 24);
+    Pixel cyr[DISPLAY_PIXELS], lat[DISPLAY_PIXELS];
+    memset(cyr, 0, sizeof(cyr));
+    memset(lat, 0, sizeof(lat));
+    screen_draw_text("\xd1\x80", 0, 0, (Pixel){255, 255, 255}, cyr); // "р" as Cyrillic "Р"
+    screen_draw_text("P", 0, 0, (Pixel){255, 255, 255}, lat);
+    CHECK(memcmp(cyr, lat, sizeof(cyr)) == 0); // shares the Latin "P" glyph
+    // Every Russian letter, upper and lower case, has its own glyph (no '?').
+    Pixel question[DISPLAY_PIXELS], letter[DISPLAY_PIXELS];
+    memset(question, 0, sizeof(question));
+    screen_draw_text("?", 0, 0, (Pixel){255, 255, 255}, question);
+    for (uint32_t code = 0x0410; code <= 0x044F; code++) {
+        char utf8[3] = {(char)(0xC0 | code >> 6), (char)(0x80 | (code & 0x3F)), 0};
+        memset(letter, 0, sizeof(letter));
+        screen_draw_text(utf8, 0, 0, (Pixel){255, 255, 255}, letter);
+        CHECK(memcmp(letter, question, sizeof(letter)) != 0);
+    }
     Pixel text_color = {0, 200, 255};
     memset(out, 0, sizeof(out));
     screen_draw_text("HI", 0, TEXT_ROW, text_color, out);
@@ -226,6 +247,23 @@ int main(int argc, char **argv) {
     CHECK(screen_scroll_pass_ms("HI") == 17 * TEXT_STEP_MS);
     screen_draw_scroll("HI", screen_scroll_pass_ms("HI") - TEXT_STEP_MS, text_color, out);
     CHECK(count_lit(out, 0, 9) <= 4); // last step: only the tail of the I
+    if (preview) {
+        const char *alphabet = "\xd0\x90\xd0\x91\xd0\x92\xd0\x93\xd0\x94\xd0\x95\xd0\x81\xd0\x96\xd0\x97\xd0\x98\xd0\x99"
+                               "\xd0\x9a\xd0\x9b\xd0\x9c\xd0\x9d\xd0\x9e\xd0\x9f\xd0\xa0\xd0\xa1\xd0\xa2\xd0\xa3\xd0\xa4"
+                               "\xd0\xa5\xd0\xa6\xd0\xa7\xd0\xa8\xd0\xa9\xd0\xaa\xd0\xab\xd0\xac\xd0\xad\xd0\xae\xd0\xaf";
+        printf("cyrillic alphabet\n");
+        for (int row = 0; row < 5; row++) {
+            Pixel strip[DISPLAY_PIXELS];
+            printf("  ");
+            for (int x0 = 0; x0 < screen_text_width(alphabet); x0 += DISPLAY_WIDTH) {
+                memset(strip, 0, sizeof(strip));
+                screen_draw_text(alphabet, -x0, 0, (Pixel){255, 255, 255}, strip);
+                for (int x = 0; x < DISPLAY_WIDTH && x0 + x < screen_text_width(alphabet); x++)
+                    putchar(lit(strip, x, row) ? '#' : '.');
+            }
+            putchar('\n');
+        }
+    }
     if (preview)
         for (uint32_t s = 2; s <= 14; s += 4) {
             char title[32];

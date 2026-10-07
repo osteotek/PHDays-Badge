@@ -327,8 +327,9 @@ void screen_draw_transition(const Pixel from[DISPLAY_PIXELS], const Pixel to[DIS
 // --- text ----------------------------------------------------------------------
 
 // Glyph rows are left-aligned in `width` bits (bit width-1 = leftmost column).
+// Glyphs are keyed by Unicode code point; lowercase is drawn as capitals.
 typedef struct {
-    char c;
+    uint16_t code;
     uint8_t width;
     uint8_t rows[5];
 } glyph_t;
@@ -346,41 +347,71 @@ static const glyph_t GLYPHS[] = {
     {'\'', 1, {1, 1, 0, 0, 0}}, {'"', 3, {5, 5, 0, 0, 0}}, {'(', 2, {1, 2, 2, 2, 1}}, {')', 2, {2, 1, 1, 1, 2}},
     {'%', 3, {5, 1, 2, 4, 5}}, {'#', 3, {5, 7, 5, 7, 5}}, {'=', 3, {0, 7, 0, 7, 0}}, {'_', 3, {0, 0, 0, 0, 7}},
     {'*', 3, {5, 2, 7, 2, 5}}, {'<', 3, {1, 2, 4, 2, 1}}, {'>', 3, {4, 2, 1, 2, 4}}, {'@', 3, {7, 5, 7, 4, 7}},
-    {'&', 3, {2, 5, 2, 5, 3}}, {'$', 3, {3, 6, 2, 3, 6}},
+    {'&', 3, {2, 5, 2, 5, 3}}, {'$', 3, {3, 6, 2, 3, 6}}, {0x00B0, 2, {3, 3, 0, 0, 0}}, // degree sign
+    // Cyrillic capitals without a Latin twin; wide letters keep their shape.
+    {0x0411, 3, {7, 4, 6, 5, 6}}, {0x0413, 3, {7, 4, 4, 4, 4}}, {0x0414, 3, {3, 5, 5, 7, 5}},
+    {0x0401, 3, {5, 7, 6, 4, 7}}, {0x0416, 5, {21, 21, 14, 21, 21}}, {0x0417, 3, {6, 1, 2, 1, 6}},
+    {0x0418, 4, {9, 11, 13, 9, 9}}, {0x0419, 4, {6, 9, 11, 13, 9}}, {0x041B, 3, {3, 5, 5, 5, 5}},
+    {0x041F, 3, {7, 5, 5, 5, 5}}, {0x0423, 3, {5, 5, 3, 1, 6}}, {0x0424, 5, {14, 21, 21, 14, 4}},
+    {0x0426, 4, {10, 10, 10, 15, 1}}, {0x0427, 3, {5, 5, 3, 1, 1}}, {0x0428, 5, {21, 21, 21, 21, 31}},
+    {0x0429, 6, {42, 42, 42, 63, 1}}, {0x042A, 4, {12, 4, 7, 5, 7}}, {0x042B, 5, {17, 17, 29, 21, 29}},
+    {0x042C, 3, {4, 4, 6, 5, 6}}, {0x042D, 3, {6, 1, 3, 1, 6}}, {0x042E, 5, {23, 21, 29, 21, 23}},
+    {0x042F, 3, {3, 5, 3, 5, 5}},
 };
-static const glyph_t DEGREE = {0, 2, {3, 3, 0, 0, 0}};
 
-static const glyph_t *glyph_for(char c) {
+// Cyrillic capitals drawn like Latin ones.
+static const struct {
+    uint16_t code;
+    char latin;
+} LATIN_TWINS[] = {{0x0410, 'A'}, {0x0412, 'B'}, {0x0415, 'E'}, {0x041A, 'K'}, {0x041C, 'M'}, {0x041D, 'H'}, {0x041E, 'O'}, {0x0420, 'P'}, {0x0421, 'C'}, {0x0422, 'T'}, {0x0425, 'X'}};
+
+static uint32_t to_capital(uint32_t code) {
+    if (code >= 'a' && code <= 'z')
+        return code - 'a' + 'A';
+    if (code >= 0x0430 && code <= 0x044F) // а-я
+        return code - 0x20;
+    if (code == 0x0451) // ё
+        return 0x0401;
+    return code;
+}
+
+static const glyph_t *glyph_for(uint32_t code) {
     static glyph_t digit;
-    if (c >= 'a' && c <= 'z')
-        c = (char)(c - 'a' + 'A');
-    if (c >= '0' && c <= '9') {
-        digit.c = c;
+    code = to_capital(code);
+    if (code >= '0' && code <= '9') {
+        digit.code = (uint16_t)code;
         digit.width = 3;
-        memcpy(digit.rows, DIGITS[c - '0'], sizeof(digit.rows));
+        memcpy(digit.rows, DIGITS[code - '0'], sizeof(digit.rows));
         return &digit;
     }
+    for (size_t i = 0; i < sizeof(LATIN_TWINS) / sizeof(LATIN_TWINS[0]); i++)
+        if (LATIN_TWINS[i].code == code)
+            return glyph_for((uint32_t)LATIN_TWINS[i].latin);
     for (size_t i = 0; i < sizeof(GLYPHS) / sizeof(GLYPHS[0]); i++)
-        if (GLYPHS[i].c == c)
+        if (GLYPHS[i].code == code)
             return &GLYPHS[i];
     return glyph_for('?');
 }
 
-// Next glyph from UTF-8 text: "°" is supported, other multibyte characters
-// become '?'. Returns NULL at the end.
+// Next glyph from UTF-8 text; NULL at the end. Malformed bytes become '?'.
 static const glyph_t *next_glyph(const char **text) {
     const unsigned char *s = (const unsigned char *)*text;
     if (!*s)
         return NULL;
-    if (s[0] < 0x80) {
-        *text += 1;
-        return glyph_for((char)s[0]);
-    }
+    uint32_t code = s[0];
     size_t length = 1;
-    while (s[length] && (s[length] & 0xC0) == 0x80)
-        length++;
+    if (s[0] >= 0xC0) {
+        size_t extra = s[0] >= 0xF0 ? 3 : s[0] >= 0xE0 ? 2 : 1;
+        code = s[0] & (0x3F >> extra);
+        while (length <= extra && (s[length] & 0xC0) == 0x80)
+            code = code << 6 | (s[length++] & 0x3F);
+        if (length != extra + 1)
+            code = '?';
+    } else if (s[0] >= 0x80) {
+        code = '?';
+    }
     *text += length;
-    return length == 2 && s[0] == 0xC2 && s[1] == 0xB0 ? &DEGREE : glyph_for('?');
+    return glyph_for(code);
 }
 
 int screen_text_width(const char *text) {
