@@ -99,12 +99,8 @@ void app_main(void) {
         ESP_LOGE("TASK4", "Failed to create ota_verify_after_update task");
     }
 
-    // TOdo: Fix ota prority!
-    xTaskCreate(ota_periodic_updates, "ota_periodic_updates", 4096, NULL, 5, &xHandle);
-
-    if (xHandle == NULL) {
-        ESP_LOGE("TASK5", "Failed to create ota_periodic_updates task");
-    }
+    // Home Wi-Fi stays connected. The festival OTA polling task deliberately
+    // disconnects the station and must not run in this firmware.
 
     init_buzzer();
 

@@ -253,18 +253,51 @@ esp_err_t loadFromNVS() {
         return err;
 
     if (required_size > 0) {
-        // maybe remove malloc and use array?
-        // Image *img = malloc(sizeof(Image));
-        ESP_LOGI(TAG, "loadFromNVS image_to_show required_size: %i", required_size);
-        // Image *img = getImageToShowCustom();
-        err = nvs_get_blob(my_handle, "image_to_show", getImageToShowCustom(), &required_size);
+        // Older badges stored 32-bit frame durations (2436 bytes per Image).
+        // Never read that larger blob directly into the current 2418-byte Image.
+        typedef struct {
+            Pixel pixels[100];
+            uint32_t duration;
+        } LegacyFrame;
+        typedef struct {
+            LegacyFrame frames[IMAGE_MAX_FRAMES];
+            uint8_t shiftMode;
+            uint8_t framesCount;
+        } LegacyImage;
+        Image *image = getImageToShowCustom();
+        if (required_size == sizeof(Image)) {
+            err = nvs_get_blob(my_handle, "image_to_show", image, &required_size);
+        } else if (required_size == sizeof(LegacyImage)) {
+            LegacyImage *legacy = malloc(sizeof(LegacyImage));
+            if (!legacy) {
+                nvs_close(my_handle);
+                return ESP_ERR_NO_MEM;
+            }
+            err = nvs_get_blob(my_handle, "image_to_show", legacy, &required_size);
+            if (err == ESP_OK) {
+                for (size_t i = 0; i < IMAGE_MAX_FRAMES; i++) {
+                    memcpy(image->frames[i].pixels, legacy->frames[i].pixels, sizeof(image->frames[i].pixels));
+                    image->frames[i].duration = legacy->frames[i].duration > UINT16_MAX ? UINT16_MAX : legacy->frames[i].duration;
+                }
+                image->shiftMode = legacy->shiftMode;
+                image->framesCount = legacy->framesCount;
+                ESP_LOGI(TAG, "Converted saved animation from legacy 32-bit frame timings");
+            }
+            free(legacy);
+        } else {
+            ESP_LOGE(TAG, "Unsupported saved image size: %u", (unsigned)required_size);
+            nvs_close(my_handle);
+            return ESP_ERR_INVALID_SIZE;
+        }
         if (err != ESP_OK) {
-            // free(img);
+            nvs_close(my_handle);
             return err;
         }
-        ESP_LOGI(TAG, "loadFromNVS image_to_show loaded framesCount: %i", getImageToShowCustom()->framesCount);
-        // restoreImageToShow(img);
-        // free(img);
+        if (image->framesCount == 0 || image->framesCount > IMAGE_MAX_FRAMES) {
+            nvs_close(my_handle);
+            return ESP_ERR_INVALID_SIZE;
+        }
+        ESP_LOGI(TAG, "loadFromNVS image_to_show loaded framesCount: %i", image->framesCount);
     }
 
     uint8_t settedCustom = 0;

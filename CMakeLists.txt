@@ -9,25 +9,26 @@ project(badge-esp32)
 add_custom_command(
     TARGET app
     POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy ${build_dir}/${PROJECT_BIN} ${build_dir}/rls/${PROJECT_BIN}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/rls
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/${PROJECT_BIN} ${CMAKE_BINARY_DIR}/rls/${PROJECT_BIN}
     COMMENT "Copying esp32 binary output to SomeFolder"
 )
 
 add_custom_command(
     TARGET app
     POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy ${build_dir}/phy_init_data.bin ${build_dir}/rls/phy_init_data.bin
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/phy_init_data.bin ${CMAKE_BINARY_DIR}/rls/phy_init_data.bin
     COMMENT "Copying esp32 binary output to SomeFolder"
 )
 add_custom_command(
     TARGET app
     POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy ${build_dir}/bootloader/bootloader.bin ${build_dir}/rls/bootloader.bin
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/bootloader/bootloader.bin ${CMAKE_BINARY_DIR}/rls/bootloader.bin
     COMMENT "Copying esp32 binary output to SomeFolder"
 )
 add_custom_command(
     TARGET app
     POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy ${build_dir}/partition_table/partition-table.bin ${build_dir}/rls/partition-table.bin
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/partition_table/partition-table.bin ${CMAKE_BINARY_DIR}/rls/partition-table.bin
     COMMENT "Copying esp32 binary output to SomeFolder"
 )

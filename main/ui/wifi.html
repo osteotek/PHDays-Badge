@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wi-Fi · PHDays Badge</title>
+<style>
+  body{font:16px system-ui,sans-serif;background:#15161c;color:#eee;max-width:32rem;margin:3rem auto;padding:0 1.2rem;line-height:1.5}
+  a{color:#acbaff} label{display:block;margin-top:1rem} input,button{box-sizing:border-box;width:100%;font:inherit;padding:.7rem;border-radius:.4rem;border:1px solid #777}
+  button{margin-top:1.5rem;background:#b9c4ff;color:#111;cursor:pointer} button:disabled{opacity:.5;cursor:default}
+  #status{padding:1rem;background:#262832;border-radius:.5rem} #message{white-space:pre-line}
+</style>
+<nav><a href="/">Pixel editor</a> · <a href="/buzzer">Music</a></nav>
+<h1>Home Wi-Fi</h1>
+<p>Connect your badge to a 2.4 GHz WPA2-compatible network. Its own hotspot stays available.</p>
+<p id="status" role="status">Checking connection…</p>
+<form id="settings">
+  <label for="ssid">Network name</label>
+  <input id="ssid" name="ssid" autocomplete="off" required maxlength="32">
+  <label for="password">Wi-Fi password</label>
+  <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="64">
+  <button id="save" disabled>Save and connect</button>
+</form>
+<p id="message" role="status"></p>
+<script>
+const statusText = document.getElementById('status');
+const message = document.getElementById('message');
+const form = document.getElementById('settings');
+const save = document.getElementById('save');
+let initialized = false;
+let restarting = false;
+async function refresh() {
+  if (restarting) return;
+  try {
+    const response = await fetch('/api/v1/wifi', {cache:'no-store'});
+    if (!response.ok) throw new Error('Could not read Wi-Fi status.');
+    const state = await response.json();
+    statusText.textContent = state.connected ? 'Connected to ' + state.ssid + '. Home address: ' :
+      (state.ssid ? 'Trying to connect to ' + state.ssid + '. Check the password and 2.4 GHz signal if this persists.' : 'No home network configured.');
+    if (state.connected) {
+      const link = document.createElement('a');
+      link.href = 'http://' + state.ip + '/';
+      link.textContent = link.href;
+      statusText.appendChild(link);
+    }
+    if (!initialized) {
+      form.elements.ssid.value = state.ssid;
+      initialized = true;
+    }
+    save.disabled = !state.can_configure;
+    if (!state.can_configure) message.textContent = 'Join the badge’s phd2_… hotspot and open http://192.168.4.1/wifi to change these settings.';
+  } catch (error) {
+    statusText.textContent = 'Badge unreachable. Reconnect to its Wi-Fi or reload this page from your home network.';
+  }
+}
+form.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (new TextEncoder().encode(form.elements.ssid.value).length > 32) {
+    message.textContent = 'Network names must be at most 32 bytes.';
+    return;
+  }
+  restarting = true;
+  save.disabled = true;
+  message.textContent = 'Saving…';
+  try {
+    const response = await fetch('/api/v1/wifi', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ssid:form.elements.ssid.value, password:form.elements.password.value})
+    });
+    if (!response.ok) throw new Error(await response.text());
+    form.elements.password.value = '';
+    message.textContent = 'Saved. The badge is restarting.\nReconnect to its hotspot and reload this page to see its home-network address. Then join your home Wi-Fi and open that address.';
+  } catch (error) {
+    restarting = false;
+    save.disabled = false;
+    message.textContent = error.message;
+  }
+});
+refresh();
+setInterval(refresh, 5000);
+</script>
+</html>

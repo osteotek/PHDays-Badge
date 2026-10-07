@@ -2,6 +2,8 @@
 #include "esp_mac.h"
 #include "esp_random.h"
 #include "esp_wifi.h"
+#include "esp_timer.h"
+#include "home_wifi.h"
 #include "nvs_utils.h"
 #include <inttypes.h>
 #include <mbedtls/md.h>
@@ -9,19 +11,18 @@
 #include <string.h>
 #include <sys/types.h>
 
-#include "ota.h"
 #include "wifi_utilss.h"
 
 #define ESP_WIFI_CHANNEL CONFIG_ESP_WIFI_CHANNEL
 #define MAX_STA_CONN CONFIG_ESP_MAX_STA_CONN
-#define DEFAULT_SSID CONFIG_OTA_SSID
-#define DEFAULT_PWD CONFIG_OTA_PASSWORD
 #define DEFAULT_RSSI -127
 #define DEFAULT_RSSI_5G_ADJUSTMENT 0
 
 #define STORAGE_NAMESPACE "storage"
 
 static const char *TAG = "wifi softAP";
+static bool home_wifi_configured;
+static esp_timer_handle_t reconnect_timer;
 uint8_t wifiClientConnectCounter = 0;
 
 unsigned char ESP_WIFI_SSID[16] = "phd2_1234567890";
@@ -30,26 +31,41 @@ uint8_t ESP_WIFI_SSID_bytes[4] = {0};
 unsigned char ESP_WIFI_PASS[11] = "1234567890";
 uint64_t ESP_WIFI_PASS_LONG = 0;
 
+static void connect_home_wifi(void *arg) {
+    if (!home_wifi_configured)
+        return;
+    esp_err_t err = esp_wifi_connect();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Wi-Fi connection attempt failed: %s", esp_err_to_name(err));
+        esp_timer_start_once(reconnect_timer, 5000000);
+    }
+}
+
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
-    if (event_id == WIFI_EVENT_AP_STACONNECTED) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
         wifi_event_ap_staconnected_t *event = (wifi_event_ap_staconnected_t *)event_data;
         ESP_LOGI(TAG, "station " MACSTR " join, AID=%d", MAC2STR(event->mac), event->aid);
         if (wifiClientConnectCounter < 255)
             wifiClientConnectCounter++;
-    } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STADISCONNECTED) {
         wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *)event_data;
         ESP_LOGI(TAG, "station " MACSTR " leave, AID=%d", MAC2STR(event->mac), event->aid);
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         ESP_LOGI(TAG, "sta started");
-        esp_wifi_connect();
+        connect_home_wifi(NULL);
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t *event = event_data;
+        ESP_LOGW(TAG, "Home Wi-Fi disconnected (reason %u); retrying in 5 seconds", event->reason);
+        if (home_wifi_configured && !esp_timer_is_active(reconnect_timer))
+            esp_timer_start_once(reconnect_timer, 5000000);
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_SCAN_DONE) {
         ESP_LOGI(TAG, "sta scan done");
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
         ESP_LOGI(TAG, "sta connected");
-        xTaskCreate(&ota_update_custom_task, "ota_update_task", 8192, NULL, 5, NULL);
+        esp_timer_stop(reconnect_timer);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        ESP_LOGI(TAG, "sta got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG, "Home Wi-Fi ready. Open http://" IPSTR "/", IP2STR(&event->ip_info.ip));
     }
 }
 
@@ -147,7 +163,9 @@ void getDeviceId() {
     mbedtls_md_context_t ctx;
     mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
 
-    const size_t payloadLength = strlen(payload);
+    // A MAC address is six binary bytes, not a NUL-terminated string. Hashing
+    // past it made the fallback hotspot name depend on unrelated stack data.
+    const size_t payloadLength = sizeof(mac_base);
     const size_t keyLength = strlen(key);
 
     mbedtls_md_init(&ctx);
@@ -175,12 +193,18 @@ void getDeviceId() {
 void wifi_init_softap(void) {
 
     esp_netif_create_default_wifi_ap();
-    esp_netif_create_default_wifi_sta();
+    esp_netif_t *sta = esp_netif_create_default_wifi_sta();
+    ESP_ERROR_CHECK(esp_netif_set_hostname(sta, "phdays-badge"));
+
+    const esp_timer_create_args_t reconnect_args = {.callback = connect_home_wifi, .name = "wifi_reconnect"};
+    ESP_ERROR_CHECK(esp_timer_create(&reconnect_args, &reconnect_timer));
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
 
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, NULL));
 
     wifi_config_t wifi_config_ap = {
         .ap =
@@ -198,8 +222,6 @@ void wifi_init_softap(void) {
     wifi_config_t wifi_config_sta = {
         .sta =
             {
-                .ssid = DEFAULT_SSID,
-                .password = DEFAULT_PWD,
                 .scan_method = WIFI_FAST_SCAN,
                 .sort_method = WIFI_CONNECT_AP_BY_SIGNAL,
                 .threshold.rssi = DEFAULT_RSSI,
@@ -207,6 +229,7 @@ void wifi_init_softap(void) {
                 .threshold.rssi_5g_adjustment = DEFAULT_RSSI_5G_ADJUSTMENT,
             },
     };
+    home_wifi_configured = loadHomeWiFi(&wifi_config_sta);
 
     memcpy(wifi_config_ap.ap.ssid, ESP_WIFI_SSID, strlen((const char *)ESP_WIFI_SSID));
     memcpy(wifi_config_ap.ap.password, ESP_WIFI_PASS, strlen((const char *)ESP_WIFI_PASS));
@@ -215,22 +238,21 @@ void wifi_init_softap(void) {
         wifi_config_ap.ap.authmode = WIFI_AUTH_OPEN;
     }
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(home_wifi_configured ? WIFI_MODE_APSTA : WIFI_MODE_AP));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config_ap));
 
     ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N));
 
     ESP_ERROR_CHECK(esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT40));
 
-    ESP_ERROR_CHECK(esp_wifi_config_80211_tx_rate(WIFI_IF_AP, WIFI_PHY_RATE_54M));
-
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config_sta));
-    ESP_ERROR_CHECK(esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT40));
-    ESP_ERROR_CHECK(esp_wifi_config_80211_tx_rate(WIFI_IF_STA, WIFI_PHY_RATE_54M));
+    if (home_wifi_configured) {
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config_sta));
+        ESP_ERROR_CHECK(esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20));
+    }
     ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(8)); // 2dbm tx power!
+    // Use normal adaptive transmit rates/power for reliable home-network range.
 
-    ESP_LOGI(TAG, "wifi_init_softap finished. SSID:%s password:%s channel:%d", ESP_WIFI_SSID, ESP_WIFI_PASS, ESP_WIFI_CHANNEL);
+    ESP_LOGI(TAG, "Hotspot ready. SSID:%s; Wi-Fi setup: http://192.168.4.1/wifi", ESP_WIFI_SSID);
 }
 
 void initWiFi() {

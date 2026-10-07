@@ -17,6 +17,7 @@
 #include "esp_vfs.h"
 
 #include "buzzer.h"
+#include "home_wifi.h"
 #include "led_plate.h"
 #include "rest_server.h"
 
@@ -322,7 +323,7 @@ static esp_err_t download_get_handler(httpd_req_t *req) {
 
         /* Captive portal redirect*/
         httpd_resp_set_status(req, "302 Temporary Redirect");
-        httpd_resp_set_hdr(req, "Location", "http://badge.phd2/");
+        httpd_resp_set_hdr(req, "Location", "/");
         // iOS requires content in the response to detect a captive portal, simply redirecting is not sufficient.
         httpd_resp_send(req, "Redirect to the captive portal", HTTPD_RESP_USE_STRLEN);
         ESP_LOGI(TAG, "Redirecting to root");
@@ -833,6 +834,8 @@ esp_err_t start_file_server(const char *base_path) {
         ESP_LOGE(TAG, "Failed to start file server!");
         return ESP_FAIL;
     }
+
+    ESP_ERROR_CHECK(registerHomeWiFiSettings(server));
 
     httpd_uri_t system_info_get_uri = {.uri = "/api/v1/system/info", .method = HTTP_GET, .handler = system_info_get_handler, .user_ctx = server_data};
     httpd_register_uri_handler(server, &system_info_get_uri);
