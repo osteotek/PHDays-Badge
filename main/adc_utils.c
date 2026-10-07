@@ -62,7 +62,7 @@ static void example_adc_calibration_deinit(adc_cali_handle_t handle) {
 }
 
 // Continuously sample ADC1
-void sample_adc() {
+void sample_adc(void *arg) {
     while (1) {
         ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, EXAMPLE_ADC1_CHAN0, &adc_raw));
         // ESP_LOGI(TAG, "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_1 + 1, EXAMPLE_ADC1_CHAN0, adc_raw);

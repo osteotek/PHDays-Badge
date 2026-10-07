@@ -11,7 +11,7 @@
 </style>
 <nav><a href="/">Pixel editor</a> · <a href="/buzzer">Music</a></nav>
 <h1>Home Wi-Fi</h1>
-<p>Connect your badge to a 2.4 GHz WPA2-compatible network. Its own hotspot stays available.</p>
+<p>Connect your badge to a 2.4 GHz WPA2-compatible network. Its hotspot turns off once connected and returns if the network is unavailable for 2 minutes.</p>
 <p id="status" role="status">Checking connection…</p>
 <form id="settings">
   <label for="ssid">Network name</label>
@@ -47,7 +47,7 @@ async function refresh() {
       initialized = true;
     }
     save.disabled = !state.can_configure;
-    if (!state.can_configure) message.textContent = 'Join the badge’s phd2_… hotspot and open http://192.168.4.1/wifi to change these settings.';
+    if (!state.can_configure) message.textContent = 'To change these settings, join the badge’s phd2_… hotspot (it appears when home Wi-Fi is unavailable for 2 minutes) and open http://192.168.4.1/wifi.';
   } catch (error) {
     statusText.textContent = 'Badge unreachable. Reconnect to its Wi-Fi or reload this page from your home network.';
   }
@@ -68,7 +68,7 @@ form.addEventListener('submit', async event => {
     });
     if (!response.ok) throw new Error(await response.text());
     form.elements.password.value = '';
-    message.textContent = 'Saved. The badge is restarting.\nReconnect to its hotspot and reload this page to see its home-network address. Then join your home Wi-Fi and open that address.';
+    message.textContent = 'Saved. The badge is restarting and will join your home Wi-Fi; its hotspot turns off once connected.\nJoin your home Wi-Fi and open the badge’s address (your router lists it as phdays-badge).';
   } catch (error) {
     restarting = false;
     save.disabled = false;

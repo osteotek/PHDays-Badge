@@ -5,19 +5,22 @@
 #include "esp_netif.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "home_wifi_secrets.h"
 #include "lwip/sockets.h"
 #include "nvs.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
-// One versioned NVS blob keeps the SSID/password pair together. No credentials
-// are compiled into the application, logged, or returned by the HTTP API.
+// One versioned NVS blob keeps the SSID/password pair together. Credentials are
+// never logged or returned by the HTTP API. Settings saved through the hotspot
+// page take precedence over the defaults compiled in from wifi_secrets.ini.
 typedef struct {
     char ssid[33];
     char password[65];
 } home_credentials_t;
 
+static const char *TAG = "home_wifi";
 static esp_timer_handle_t restart_timer;
 
 static bool valid_credentials(const char *ssid, const char *password) {
@@ -33,17 +36,36 @@ static bool valid_credentials(const char *ssid, const char *password) {
     return true;
 }
 
-bool loadHomeWiFi(wifi_config_t *config) {
-    home_credentials_t credentials = {0};
+static bool load_saved_credentials(home_credentials_t *credentials) {
     nvs_handle_t handle;
     if (nvs_open("home_wifi", NVS_READONLY, &handle) != ESP_OK)
         return false;
-    size_t length = sizeof(credentials);
-    esp_err_t err = nvs_get_blob(handle, "credentials_v1", &credentials, &length);
+    size_t length = sizeof(*credentials);
+    esp_err_t err = nvs_get_blob(handle, "credentials_v1", credentials, &length);
     nvs_close(handle);
-    if (err != ESP_OK || length != sizeof(credentials) || credentials.ssid[32] != '\0' || credentials.password[64] != '\0' ||
-        !valid_credentials(credentials.ssid, credentials.password))
+    return err == ESP_OK && length == sizeof(*credentials) && credentials->ssid[32] == '\0' && credentials->password[64] == '\0' &&
+           valid_credentials(credentials->ssid, credentials->password);
+}
+
+static bool load_build_credentials(home_credentials_t *credentials) {
+    _Static_assert(sizeof(HOME_WIFI_BUILD_SSID) <= sizeof(credentials->ssid), "wifi_secrets.ini ssid too long");
+    _Static_assert(sizeof(HOME_WIFI_BUILD_PASSWORD) <= sizeof(credentials->password), "wifi_secrets.ini password too long");
+    memset(credentials, 0, sizeof(*credentials));
+    memcpy(credentials->ssid, HOME_WIFI_BUILD_SSID, sizeof(HOME_WIFI_BUILD_SSID));
+    memcpy(credentials->password, HOME_WIFI_BUILD_PASSWORD, sizeof(HOME_WIFI_BUILD_PASSWORD));
+    return valid_credentials(credentials->ssid, credentials->password);
+}
+
+bool loadHomeWiFi(wifi_config_t *config) {
+    home_credentials_t credentials = {0};
+    if (load_saved_credentials(&credentials)) {
+        ESP_LOGI(TAG, "Using home Wi-Fi saved on the badge");
+    } else if (load_build_credentials(&credentials)) {
+        ESP_LOGI(TAG, "Using home Wi-Fi from wifi_secrets.ini");
+    } else {
+        memset(&credentials, 0, sizeof(credentials));
         return false;
+    }
     memcpy(config->sta.ssid, credentials.ssid, strlen(credentials.ssid));
     memcpy(config->sta.password, credentials.password, strlen(credentials.password));
     memset(&credentials, 0, sizeof(credentials));

@@ -46,43 +46,50 @@ static void button_press_leds_cb(void *arg, void *usr_data) {
 }
 static void button_triple_click_leds_cb(void *arg, void *usr_data) { switchLedsShiter(); }
 
-void showSsidTask(void *pvParameters) {
-    showInt(ESP_WIFI_SSID_INT, 255, 255, 255);
-    vTaskDelete(NULL);
-}
-void showPswdTask(void *pvParameters) {
-    showInt(ESP_WIFI_PASS_LONG, 255, 0, 0);
-    vTaskDelete(NULL);
-}
+// Hotspot name, hotspot password and battery level are shown as status images by
+// one short-lived task. Button callbacks run in the shared esp_timer task, so
+// they must not wait themselves; a press while a display is running is ignored.
+typedef enum { INFO_SSID, INFO_PASSWORD, INFO_BATTERY } info_kind_t;
+static volatile bool info_busy; // only touched from button callbacks and the info task
 
-static void button_single_click_ssid_cb(void *arg, void *usr_data) {
-    ESP_LOGI(TAG, "button_single_click_ssid_cb");
-    TaskHandle_t xHandle = NULL;
-    xTaskCreate(showSsidTask, "showSsid", 4096, NULL, 5, &xHandle);
-    if (xHandle == NULL) {
-        ESP_LOGE(TAG, "Failed to create task `showSsid`");
-    };
-}
-static void button_press_pass_cb(void *arg, void *usr_data) {
-    ESP_LOGI(TAG, "button_press_pass_cb");
-    TaskHandle_t xHandle = NULL;
-    xTaskCreate(showPswdTask, "showPswd", 4096, NULL, 5, &xHandle);
-    if (xHandle == NULL) {
-        ESP_LOGE(TAG, "Failed to create task `showPswd`");
-    };
-}
-
-static void button_double_click_pass_cb(void *arg, void *usr_data) {
-    uint8_t percent = get_battery_level_percent();
-    ESP_LOGI(TAG, "button_double_click_pass_cb PERCENT: %d", percent);
-    bool showCustomTmp = getShowCustom();
-    if (showCustomTmp) {
-        save_img_custom();
+static void info_task(void *arg) {
+    switch ((info_kind_t)(intptr_t)arg) {
+    case INFO_SSID:
+        show_number_image(ESP_WIFI_SSID_INT, 255, 255, 255);
+        vTaskDelay(pdMS_TO_TICKS(15000));
+        break;
+    case INFO_PASSWORD:
+        show_number_image(ESP_WIFI_PASS_LONG, 255, 0, 0);
+        vTaskDelay(pdMS_TO_TICKS(15000));
+        break;
+    case INFO_BATTERY: {
+        uint8_t percent = get_battery_level_percent();
+        ESP_LOGI(TAG, "Battery: %d%%", percent);
+        set_power_display_image(percent);
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        break;
     }
-    set_power_display_image(percent);
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
-    reset_showImage(showCustomTmp);
+    }
+    end_status_image();
+    info_busy = false;
+    vTaskDelete(NULL);
 }
+
+static void show_info(info_kind_t kind) {
+    if (info_busy)
+        return;
+    info_busy = true;
+    if (xTaskCreate(info_task, "badge_info", 4096, (void *)(intptr_t)kind, 5, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create info display task");
+        info_busy = false;
+    }
+}
+
+static void button_single_click_ssid_cb(void *arg, void *usr_data) { show_info(INFO_SSID); }
+
+static void button_press_pass_cb(void *arg, void *usr_data) { show_info(INFO_PASSWORD); }
+
+static void button_double_click_pass_cb(void *arg, void *usr_data) { show_info(INFO_BATTERY); }
 
 void initButtons() {
     const button_config_t btn_cfg = {0};

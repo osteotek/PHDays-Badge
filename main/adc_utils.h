@@ -11,5 +11,5 @@
 #include <string.h>
 
 void init_adc();
-void sample_adc();
+void sample_adc(void *arg);
 uint8_t get_battery_level_percent();

@@ -11,7 +11,6 @@
 #include "lwip/sys.h"
 #include "sdkconfig.h"
 #include <inttypes.h>
-#include <mbedtls/md.h>
 #include <stdio.h>
 
 #include "adc_utils.h"
@@ -60,8 +59,10 @@ void app_main(void) {
     const char *base_path = "/data";
     ESP_ERROR_CHECK(mount_storage(base_path));
 
+    // Saved state is optional: on failure start with defaults instead of rebooting forever.
     ret = loadFromNVS();
-    ESP_ERROR_CHECK(ret);
+    if (ret != ESP_OK)
+        ESP_LOGE(TAG, "Loading saved state failed (%s); using defaults", esp_err_to_name(ret));
 
     TaskHandle_t xHandle = NULL;
     xTaskCreatePinnedToCore(plateUpdateTask, "ledPlate", 4096, NULL, 2, &xHandle, 1);

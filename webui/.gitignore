@@ -1,0 +1,9 @@
+node_modules
+dist/bundle.js
+npm-debug.log
+deploy
+config.json
+routes
+.env
+npm-debug.log
+.directory

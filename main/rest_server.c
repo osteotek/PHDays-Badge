@@ -10,6 +10,7 @@
 #include "esp_log.h"
 
 #include "cJSON.h"
+#include "esp_app_desc.h"
 #include "esp_chip_info.h"
 #include "esp_http_server.h"
 #include "esp_littlefs.h"
@@ -19,6 +20,7 @@
 #include "buzzer.h"
 #include "home_wifi.h"
 #include "led_plate.h"
+#include "ota_upload.h"
 #include "rest_server.h"
 
 /* Max length a file path can have on storage */
@@ -35,7 +37,11 @@
 // Size: 40960
 // Size: 49152
 // Size: 57344
-#define SCRATCH_BUFSIZE 8192
+// 16 KB: an 8-frame animation as JSON ("255," per channel) is about 9.6 KB.
+#define SCRATCH_BUFSIZE 16384
+// httpd waits 5 s per receive; give up on a silent client after a few tries
+// instead of blocking the single server task forever.
+#define RECV_TIMEOUT_RETRIES 3
 
 #define REQ_CTX ((struct file_server_data *)(req->user_ctx))
 
@@ -52,6 +58,117 @@ static const char *TAG = "file_server";
 uint8_t webOpenedCounter = 0;
 uint8_t imageSetCounter = 0;
 uint8_t projectSaveCounter = 0;
+
+// Receives exactly len bytes of the request body into buf.
+static esp_err_t recv_exact(httpd_req_t *req, char *buf, size_t len) {
+    size_t received = 0;
+    int timeouts = 0;
+    while (received < len) {
+        int count = httpd_req_recv(req, buf + received, len - received);
+        if (count == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts <= RECV_TIMEOUT_RETRIES)
+            continue;
+        if (count <= 0)
+            return ESP_FAIL;
+        received += count;
+        timeouts = 0;
+    }
+    return ESP_OK;
+}
+
+// Reads a JSON request body into the scratch buffer as a NUL-terminated string.
+// Sends the error response itself on failure.
+static esp_err_t recv_json_body(httpd_req_t *req, char *buf) {
+    if (req->content_len >= SCRATCH_BUFSIZE) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+        return ESP_FAIL;
+    }
+    if (recv_exact(req, buf, req->content_len) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to receive request");
+        return ESP_FAIL;
+    }
+    buf[req->content_len] = '\0';
+    return ESP_OK;
+}
+
+// Streams the request body into path. With atomic set it is written to a
+// temporary file that replaces path only once complete, so a failed or aborted
+// save keeps the previous file. Sends the error response itself on failure.
+static esp_err_t recv_body_to_file(httpd_req_t *req, const char *path, bool atomic) {
+    char tmp_path[FILE_PATH_MAX + sizeof(".tmp")];
+    const char *write_path = path;
+    if (atomic) {
+        snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+        write_path = tmp_path;
+    }
+    FILE *fd = fopen(write_path, "w");
+    if (!fd) {
+        ESP_LOGE(TAG, "Failed to create file : %s", write_path);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to create file");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "Receiving file : %s...", path);
+    char *buf = REQ_CTX->scratch;
+    const char *error = NULL;
+    for (size_t remaining = req->content_len; remaining > 0 && !error;) {
+        size_t len = MIN(remaining, SCRATCH_BUFSIZE);
+        if (recv_exact(req, buf, len) != ESP_OK)
+            error = "Failed to receive file";
+        else if (fwrite(buf, 1, len, fd) != len)
+            error = "Failed to write file to storage";
+        else
+            remaining -= len;
+    }
+    if (fclose(fd) != 0 && !error)
+        error = "Failed to write file to storage";
+    if (!error && atomic && rename(tmp_path, path) != 0)
+        error = "Failed to write file to storage";
+    if (error) {
+        unlink(write_path);
+        ESP_LOGE(TAG, "%s: %s", error, path);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, error);
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "File reception complete");
+    return ESP_OK;
+}
+
+// JSON number clamped to a colour channel; anything else counts as 0.
+static uint8_t json_byte(const cJSON *item) {
+    if (!cJSON_IsNumber(item) || item->valuedouble <= 0)
+        return 0;
+    return item->valuedouble >= 255 ? 255 : (uint8_t)item->valuedouble;
+}
+
+// Validates {"frames":[{"frame":[r,g,b,...],"delay":ms},...]} into image.
+// Returns an error message, or NULL on success. Short frames are padded black.
+static const char *parse_picture(const cJSON *root, Image *image) {
+    const cJSON *frames = cJSON_GetObjectItem(root, "frames");
+    int count = cJSON_GetArraySize(frames);
+    if (!cJSON_IsArray(frames) || count < 1 || count > IMAGE_MAX_FRAMES)
+        return "Picture needs 1-8 frames";
+    memset(image, 0, sizeof(*image));
+    image->framesCount = count;
+    size_t n = 0;
+    const cJSON *frame;
+    cJSON_ArrayForEach(frame, frames) {
+        const cJSON *values = cJSON_GetObjectItem(frame, "frame");
+        const cJSON *delay = cJSON_GetObjectItem(frame, "delay");
+        if (!cJSON_IsArray(values) || cJSON_GetArraySize(values) > 300)
+            return "Each frame needs a \"frame\" array of up to 300 values";
+        double ms = cJSON_IsNumber(delay) ? delay->valuedouble : 1000;
+        image->frames[n].duration = ms <= 0 ? 0 : ms >= UINT16_MAX ? UINT16_MAX : (uint16_t)ms;
+        size_t i = 0;
+        const cJSON *value;
+        cJSON_ArrayForEach(value, values) {
+            Pixel *pixel = &image->frames[n].pixels[i / 3];
+            uint8_t *channel = i % 3 == 0 ? &pixel->r : i % 3 == 1 ? &pixel->g : &pixel->b;
+            *channel = json_byte(value);
+            i++;
+        }
+        n++;
+    }
+    return NULL;
+}
 
 static esp_err_t index_html_get_handler(httpd_req_t *req) {
     extern const uint8_t index_html_start[] asm("_binary_index_html_start");
@@ -369,7 +486,6 @@ static esp_err_t download_get_handler(httpd_req_t *req) {
 
 static esp_err_t upload_post_handler(httpd_req_t *req) {
     char filepath[FILE_PATH_MAX];
-    FILE *fd = NULL;
     struct stat file_stat;
 
     /* Skip leading "/upload" from URI to get filename */
@@ -399,54 +515,8 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
-    fd = fopen(filepath, "w");
-    if (!fd) {
-        ESP_LOGE(TAG, "Failed to create file : %s", filepath);
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to create file");
+    if (recv_body_to_file(req, filepath, false) != ESP_OK)
         return ESP_FAIL;
-    }
-
-    ESP_LOGI(TAG, "Receiving file : %s...", filename);
-
-    char *buf = REQ_CTX->scratch;
-    int received;
-    int remaining = req->content_len;
-
-    while (remaining > 0) {
-        ESP_LOGI(TAG, "Remaining size : %d", remaining);
-        if ((received = httpd_req_recv(req, buf, MIN(remaining, SCRATCH_BUFSIZE))) <= 0) {
-            if (received == HTTPD_SOCK_ERR_TIMEOUT) {
-                continue;
-            }
-
-            fflush(fd);
-            fclose(fd);
-            unlink(filepath);
-
-            ESP_LOGE(TAG, "File reception failed!");
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to receive file");
-            return ESP_FAIL;
-        }
-
-        /* Write buffer content to file on storage */
-        if (received && (received != fwrite(buf, 1, received, fd))) {
-            /* Couldn't write everything to file!
-             * Storage may be full? */
-            fflush(fd);
-            fclose(fd);
-            unlink(filepath);
-
-            ESP_LOGE(TAG, "File write failed!");
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to write file to storage");
-            return ESP_FAIL;
-        }
-
-        remaining -= received;
-    }
-
-    fflush(fd);
-    fclose(fd);
-    ESP_LOGI(TAG, "File reception complete");
 
     /* Redirect onto root to see the updated file list */
     httpd_resp_set_status(req, "303 See Other");
@@ -492,6 +562,7 @@ static esp_err_t system_info_get_handler(httpd_req_t *req) {
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
     cJSON_AddStringToObject(root, "version", IDF_VER);
+    cJSON_AddStringToObject(root, "app_version", esp_app_get_description()->version);
     cJSON_AddNumberToObject(root, "cores", chip_info.cores);
     const char *sys_info = cJSON_Print(root);
     httpd_resp_sendstr(req, sys_info);
@@ -505,25 +576,9 @@ static esp_err_t set_picture_post_handler(httpd_req_t *req) {
     if (imageSetCounter < 255)
         imageSetCounter++;
 
-    int total_len = req->content_len;
-    int cur_len = 0;
     char *buf = REQ_CTX->scratch;
-    int received = 0;
-
-    if (total_len >= SCRATCH_BUFSIZE) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+    if (recv_json_body(req, buf) != ESP_OK)
         return ESP_FAIL;
-    }
-
-    while (cur_len < total_len) {
-        received = httpd_req_recv(req, buf + cur_len, total_len);
-        if (received <= 0) {
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post picture pixels");
-            return ESP_FAIL;
-        }
-        cur_len += received;
-    }
-    buf[total_len] = '\0';
 
     cJSON *root = cJSON_Parse(buf);
     if (root == NULL) {
@@ -531,55 +586,21 @@ static esp_err_t set_picture_post_handler(httpd_req_t *req) {
         const char *error_ptr = cJSON_GetErrorPtr();
         if (error_ptr != NULL) {
             ESP_LOGI(TAG, "Error at position %i \n", (int)(error_ptr - buf));
-            ESP_LOGI(TAG, "Error before: %s\n", error_ptr);
         }
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
         return ESP_FAIL;
     }
 
-    cJSON *frames = cJSON_GetObjectItem(root, "frames");
-    ESP_LOGI(TAG, "frames count : %i", cJSON_GetArraySize(frames));
-    if (cJSON_GetArraySize(frames) > IMAGE_MAX_FRAMES) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Too many frames in Image");
-        cJSON_Delete(root);
-        return ESP_FAIL;
-    }
-
-    cJSON *frameJson = NULL;
-    size_t frameNum = 0;
-
-    Image *imageToShow = getImageToShowCustom();
-    SemaphoreHandle_t showFrameSemaphore = getShowFrameSemaphore();
-
-    if (showFrameSemaphore != NULL && xSemaphoreTake(showFrameSemaphore, portMAX_DELAY) == pdTRUE) {
-        (*imageToShow).shiftMode = 0;
-        (*imageToShow).framesCount = (uint8_t)cJSON_GetArraySize(frames);
-
-        cJSON_ArrayForEach(frameJson, frames) {
-            cJSON *frame_values = cJSON_GetObjectItem(frameJson, "frame");
-            cJSON *frame_duration = cJSON_GetObjectItem(frameJson, "delay");
-            if (cJSON_GetArraySize(frame_values) > 300) {
-                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Too many pixels in Frame");
-                cJSON_Delete(root);
-                xSemaphoreGive(showFrameSemaphore);
-                return ESP_FAIL;
-            }
-
-            (*imageToShow).frames[frameNum].duration = (uint16_t)frame_duration->valueint;
-            // Fixme: check if pixels count is lower than 300 and pad zeros
-            for (int i = 0; i < 100; i++) {
-                (*imageToShow).frames[frameNum].pixels[i] = (Pixel){.r = (uint8_t)cJSON_GetArrayItem(frame_values, i * 3)->valueint,
-                                                                    .g = (uint8_t)cJSON_GetArrayItem(frame_values, i * 3 + 1)->valueint,
-                                                                    .b = (uint8_t)cJSON_GetArrayItem(frame_values, i * 3 + 2)->valueint};
-            }
-            frameNum++;
-        }
-        xSemaphoreGive(showFrameSemaphore);
-    }
-
+    // Validate into a separate buffer so a bad request never touches the display.
+    static Image picture; // 2.4 KB: too large for the httpd task stack
+    const char *error = parse_picture(root, &picture);
     cJSON_Delete(root);
-    ESP_LOGI(TAG, "frames count : %i", (*imageToShow).framesCount);
-    updateImageToShowCustom();
+    if (error) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, error);
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "frames count : %i", picture.framesCount);
+    set_custom_image(&picture);
 
     setRespCORSHeaders(req, "POST");
     httpd_resp_sendstr(req, "Picture pixels setted successfully");
@@ -598,7 +619,6 @@ static esp_err_t projects_post_handler(httpd_req_t *req) {
         projectSaveCounter++;
 
     char filepath[FILE_PATH_MAX];
-    FILE *fd = NULL;
 
     const char *filename = "/projects.json";
 
@@ -613,50 +633,8 @@ static esp_err_t projects_post_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
-    fd = fopen(filepath, "w");
-    if (!fd) {
-        ESP_LOGE(TAG, "Failed to create file : %s", filepath);
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to create file");
+    if (recv_body_to_file(req, filepath, true) != ESP_OK)
         return ESP_FAIL;
-    }
-
-    ESP_LOGI(TAG, "Receiving file : %s...", filename);
-
-    char *buf = REQ_CTX->scratch;
-    int received;
-    int remaining = req->content_len;
-
-    while (remaining > 0) {
-        ESP_LOGI(TAG, "Remaining size : %d", remaining);
-        if ((received = httpd_req_recv(req, buf, MIN(remaining, SCRATCH_BUFSIZE))) <= 0) {
-            if (received == HTTPD_SOCK_ERR_TIMEOUT) {
-                continue;
-            }
-            fflush(fd);
-            fclose(fd);
-            unlink(filepath);
-
-            ESP_LOGE(TAG, "File reception failed!");
-
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to receive file");
-            return ESP_FAIL;
-        }
-
-        if (received && (received != fwrite(buf, 1, received, fd))) {
-            fflush(fd);
-            fclose(fd);
-            unlink(filepath);
-            ESP_LOGE(TAG, "File write failed!");
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to write file to storage");
-            return ESP_FAIL;
-        }
-
-        remaining -= received;
-    }
-
-    fflush(fd);
-    fclose(fd);
-    ESP_LOGI(TAG, "File reception complete");
 
     setRespCORSHeaders(req, "POST");
     httpd_resp_sendstr(req, "File uploaded successfully");
@@ -672,33 +650,19 @@ static esp_err_t projects_options_handler(httpd_req_t *req) {
 }
 
 static esp_err_t buzzer_melody_post_handler(httpd_req_t *req) {
-    int total_len = req->content_len;
-    int cur_len = 0;
     char *buf = REQ_CTX->scratch;
-    int received = 0;
-    int status = 0;
-
-    if (total_len >= SCRATCH_BUFSIZE) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "content too long");
+    if (recv_json_body(req, buf) != ESP_OK)
         return ESP_FAIL;
-    }
-
-    while (cur_len < total_len) {
-        received = httpd_req_recv(req, buf + cur_len, total_len);
-        if (received <= 0) {
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to post picture pixels");
-            return ESP_FAIL;
-        }
-        cur_len += received;
-    }
-    buf[total_len] = '\0';
 
     cJSON *root = cJSON_Parse(buf);
-    cJSON *melody_obj = cJSON_GetObjectItem(root, "melody");
-    char *melody = cJSON_GetStringValue(melody_obj);
+    const char *melody = cJSON_GetStringValue(cJSON_GetObjectItem(root, "melody"));
+    if (melody == NULL) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Expected {\"melody\": \"<RTTTL>\"}");
+        return ESP_FAIL;
+    }
     ESP_LOGI(TAG, "Recieved melody %s", melody);
-    status = parse_rtttl(melody, strlen(melody));
-
+    int status = parse_rtttl(melody, strlen(melody));
     cJSON_Delete(root);
 
     if (status < 0) {
@@ -720,7 +684,6 @@ static esp_err_t melody_options_handler(httpd_req_t *req) {
 
 static esp_err_t buzzer_melodies_list_post_handler(httpd_req_t *req) {
     char filepath[FILE_PATH_MAX];
-    FILE *fd = NULL;
 
     const char *filename = "/melodies_list.json";
 
@@ -735,50 +698,8 @@ static esp_err_t buzzer_melodies_list_post_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
-    fd = fopen(filepath, "w");
-    if (!fd) {
-        ESP_LOGE(TAG, "Failed to create file : %s", filepath);
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to create file");
+    if (recv_body_to_file(req, filepath, true) != ESP_OK)
         return ESP_FAIL;
-    }
-
-    ESP_LOGI(TAG, "Receiving file : %s...", filename);
-
-    char *buf = REQ_CTX->scratch;
-    int received;
-    int remaining = req->content_len;
-
-    while (remaining > 0) {
-        ESP_LOGI(TAG, "Remaining size : %d", remaining);
-        if ((received = httpd_req_recv(req, buf, MIN(remaining, SCRATCH_BUFSIZE))) <= 0) {
-            if (received == HTTPD_SOCK_ERR_TIMEOUT) {
-                continue;
-            }
-
-            fclose(fd);
-            unlink(filepath);
-
-            ESP_LOGE(TAG, "File reception failed!");
-
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to receive file");
-            return ESP_FAIL;
-        }
-
-        if (received && (received != fwrite(buf, 1, received, fd))) {
-            fflush(fd);
-            fclose(fd);
-            unlink(filepath);
-            ESP_LOGE(TAG, "File write failed!");
-            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to write file to storage");
-            return ESP_FAIL;
-        }
-
-        remaining -= received;
-    }
-
-    fflush(fd);
-    fclose(fd);
-    ESP_LOGI(TAG, "File reception complete");
 
     setRespCORSHeaders(req, "POST");
     httpd_resp_sendstr(req, "File uploaded successfully");
@@ -825,7 +746,7 @@ esp_err_t start_file_server(const char *base_path) {
     config.stack_size = 8196;
     // config.max_open_sockets = 5;
     // config.backlog_conn = 3;
-    config.max_uri_handlers = 20;
+    config.max_uri_handlers = 24;
     config.lru_purge_enable = true;
     config.uri_match_fn = httpd_uri_match_wildcard;
 
@@ -836,6 +757,7 @@ esp_err_t start_file_server(const char *base_path) {
     }
 
     ESP_ERROR_CHECK(registerHomeWiFiSettings(server));
+    ESP_ERROR_CHECK(registerOtaUpload(server));
 
     httpd_uri_t system_info_get_uri = {.uri = "/api/v1/system/info", .method = HTTP_GET, .handler = system_info_get_handler, .user_ctx = server_data};
     httpd_register_uri_handler(server, &system_info_get_uri);

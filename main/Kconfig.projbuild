@@ -12,50 +12,6 @@ menu "Custom Configuration"
         help
             Max number of the STA connects to AP.
 
-    config HTTPD_MAX_REQ_HDR_LEN
-        int "Max HTTP Request Header Length"
-        default 1024
-        help
-            This sets the maximum supported size of headers section in HTTP request packet to be processed by the server
-
-    config HTTPD_MAX_URI_LEN
-        int "Max HTTP URI Length"
-        default 1024
-        help
-            This sets the maximum supported size of HTTP request URI to be processed by the server
-
-    #ota config
-    config OTA_SSID
-        string "OTA WiFi SSID"
-        default "some-ota-ssid"
-        help
-            SSID (network name) to connect to during ota update
-
-    config OTA_PASSWORD
-        string "OTA WiFi Password"
-        default "some-ota-pass"
-        help
-            OTA WiFi password.
-
-    config OTA_FIRMWARE_UPGRADE_URL
-        string "Firmware Upgrade URL"
-        default "https://192.168.88.15/update.bin"
-        help
-            URL of server which hosts the firmware image.
-
-    config OTA_RECV_TIMEOUT
-        int "OTA Receive Timeout"
-        default 25000
-        help
-            OTA Receive Timeout
-
-    config OTA_PERIOD
-        int "OTA Period between updates' checks"
-        default 300000
-        range 30000 1000000
-        help
-            OTA Period between updates' checks
-
     #buttons config
     config PASS_BUTTON
         int "Password button pin"

@@ -50,6 +50,29 @@ int lastActivitySecondsDelta = 600;
 
 static SemaphoreHandle_t xSemaphore = NULL;
 
+// Status images (update progress/result, battery level, hotspot name/password)
+// temporarily replace the display. The user's picture, mode and screen state are
+// stashed once and restored by end_status_image(); saveData() skips the display
+// state meanwhile, and user actions during a status image apply to the stash.
+static bool status_active, saved_show_custom, saved_setted_custom, saved_leds_on;
+
+// Brightness offset of the breathing effect. It never changes currentBrightness,
+// so interrupting the effect cannot shift the user's brightness setting.
+static int8_t breathOffset = 0;
+
+static bool lock_display(void) { return xSemaphore != NULL && xSemaphoreTake(xSemaphore, portMAX_DELAY) == pdTRUE; }
+
+static void unlock_display(void) { xSemaphoreGive(xSemaphore); }
+
+static void show_status_image(const Image *image, uint8_t shift_mode);
+
+// Waits at least one tick: shorter frame durations would otherwise busy-loop the
+// display task and starve lower-priority tasks on its core.
+static void frameDelay(uint32_t ms) {
+    TickType_t ticks = pdMS_TO_TICKS(ms);
+    vTaskDelay(ticks ? ticks : 1);
+}
+
 static led_strip_handle_t led_strip;
 
 led_strip_handle_t configure_led(void) {
@@ -77,10 +100,13 @@ led_strip_handle_t configure_led(void) {
 }
 
 void showFrame(const Pixel pixels[]) {
+    int brightness = currentBrightness + breathOffset;
+    if (brightness < minBrightness)
+        brightness = minBrightness;
     if (xSemaphore != NULL && xSemaphoreTake(xSemaphore, portMAX_DELAY) == pdTRUE) {
         for (size_t leds = 0; leds < LED_STRIP_LED_COUNT; leds++) {
-            ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, LED_STRIP_LED_COUNT - 1 - leds, pixels[leds].r * currentBrightness / 100, pixels[leds].g * currentBrightness / 100,
-                                                pixels[leds].b * currentBrightness / 100));
+            ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, LED_STRIP_LED_COUNT - 1 - leds, pixels[leds].r * brightness / 100, pixels[leds].g * brightness / 100,
+                                                pixels[leds].b * brightness / 100));
         }
         ESP_ERROR_CHECK(led_strip_refresh(led_strip));
         xSemaphoreGive(xSemaphore);
@@ -97,35 +123,18 @@ void showBlackFrame() {
     }
 }
 
-void showFrameBr(const Pixel pixels[]) {
-    for (uint8_t br = 1; br < 15; br++) {
-        for (size_t leds = 0; leds < LED_STRIP_LED_COUNT; leds++) {
-            ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, LED_STRIP_LED_COUNT - 1 - leds, pixels[leds].r * br / 100, pixels[leds].g * br / 100, pixels[leds].b * br / 100));
-        }
-        ESP_ERROR_CHECK(led_strip_refresh(led_strip));
-        vTaskDelay(150 / portTICK_PERIOD_MS);
-    }
-    for (uint8_t br = 15; br > 10; br -= 1) {
-        for (size_t leds = 0; leds < LED_STRIP_LED_COUNT; leds++) {
-            ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, LED_STRIP_LED_COUNT - 1 - leds, pixels[leds].r * br / 100, pixels[leds].g * br / 100, pixels[leds].b * br / 100));
-        }
-        ESP_ERROR_CHECK(led_strip_refresh(led_strip));
-        vTaskDelay(150 / portTICK_PERIOD_MS);
-    }
-}
-
 void setAutoFade() {
     if (autoFadeLeds && lastActivity > 0 && ledsOn) {
         ESP_LOGI(TAG, "Fade last activity check");
-        if (lastActivity + lastActivitySecondsDelta < (xTaskGetTickCount() * portTICK_PERIOD_MS) / 1000) {
-            ESP_LOGW(TAG, "Fade last activity in past %lu for %lu", lastActivity, (xTaskGetTickCount() * portTICK_PERIOD_MS) / 1000);
+        if (lastActivity + lastActivitySecondsDelta < pdTICKS_TO_MS(xTaskGetTickCount()) / 1000) {
+            ESP_LOGW(TAG, "Fade last activity in past %lu for %lu", lastActivity, pdTICKS_TO_MS(xTaskGetTickCount()) / 1000);
             if (!autoFaded) {
                 beforeFadeBrightness = currentBrightness;
                 currentBrightness = fadeBrightness;
                 autoFaded = true;
             }
         } else {
-            ESP_LOGW(TAG, "Fade last activity not in past %lu for %lu", lastActivity, (xTaskGetTickCount() * portTICK_PERIOD_MS) / 1000);
+            ESP_LOGW(TAG, "Fade last activity not in past %lu for %lu", lastActivity, pdTICKS_TO_MS(xTaskGetTickCount()) / 1000);
             if (autoFaded) {
                 currentBrightness = beforeFadeBrightness;
                 autoFaded = false;
@@ -136,37 +145,8 @@ void setAutoFade() {
 
 void updateLastActivity() {
     // ESP_LOGI(TAG, "Update last activity %lu", lastActivity);
-    lastActivity = (xTaskGetTickCount() * portTICK_PERIOD_MS) / 1000;
+    lastActivity = pdTICKS_TO_MS(xTaskGetTickCount()) / 1000;
     // ESP_LOGI(TAG, "beforefade bight  `%u`  curr bigth `%u`", beforeFadeBrightness, currentBrightness);
-}
-
-void showTestColorOld(int r, int g, int b) {
-    for (uint8_t br = 1; br < 25; br++) {
-        for (size_t leds = 0; leds < LED_STRIP_LED_COUNT; leds++) {
-            ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, LED_STRIP_LED_COUNT - 1 - leds, r * br / 100, g * br / 100, b * br / 100));
-        }
-        ESP_ERROR_CHECK(led_strip_refresh(led_strip));
-        vTaskDelay(100 / portTICK_PERIOD_MS);
-    }
-
-    for (uint8_t br = 25; br > 5; br -= 1) {
-        for (size_t leds = 0; leds < LED_STRIP_LED_COUNT; leds++) {
-            ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, LED_STRIP_LED_COUNT - 1 - leds, r * br / 100, g * br / 100, b * br / 100));
-        }
-        ESP_ERROR_CHECK(led_strip_refresh(led_strip));
-        vTaskDelay(100 / portTICK_PERIOD_MS);
-    }
-}
-
-void showColor(uint8_t r, uint8_t g, uint8_t b) {
-    ledsOn = false;
-    if (xSemaphore != NULL && xSemaphoreTake(xSemaphore, portMAX_DELAY) == pdTRUE) {
-        for (size_t leds = 0; leds < LED_STRIP_LED_COUNT; leds++) {
-            ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, LED_STRIP_LED_COUNT - 1 - leds, r * maxBrightness / 100, g * maxBrightness / 100, b * maxBrightness / 100));
-        }
-        ESP_ERROR_CHECK(led_strip_refresh(led_strip));
-        xSemaphoreGive(xSemaphore);
-    }
 }
 
 void setframeBufferDisplayed(const Pixel pixels[]) {
@@ -222,10 +202,8 @@ void shiftLedsLeft() {
 }
 
 void breathEffect() {
-    if (step / 10 == 0)
-        currentBrightness--;
-    else if (step != 19)
-        currentBrightness++;
+    // Dim by one step per step for steps 1-9, then brighten back to 0 by step 18.
+    breathOffset = step < 10 ? -(int8_t)step : (step < 19 ? (int8_t)step - 18 : 0);
 
     for (size_t i = 0; i < LED_STRIP_LED_COUNT; i++) {
         frameBuffer[i] = frameBufferDisplayed[i];
@@ -273,11 +251,14 @@ void tickNextBaseImage() {
 void processImage() {
     ESP_LOGI(TAG, "processImage step: %i", step);
     step = 0;
-    if ((*getImage()).framesCount == 1) {
+    if ((*getImage()).framesCount == 0) {
+        frameDelay(100); // nothing valid to draw; never spin
+    } else if ((*getImage()).framesCount == 1) {
         while (step < steps) {
+            breathOffset = 0;
             if (!ledsOn) {
                 step++;
-                vTaskDelay((*getImage()).frames[0].duration / steps / portTICK_PERIOD_MS);
+                frameDelay((*getImage()).frames[0].duration / steps);
                 continue;
             }
 
@@ -299,6 +280,7 @@ void processImage() {
                 break;
             case 5:
                 shiftBaseLoopStep(breathEffect);
+                break;
             case 6:
                 // Todo: wave
                 break;
@@ -314,7 +296,7 @@ void processImage() {
             }
 
             step++;
-            vTaskDelay((*getImage()).frames[0].duration / steps / portTICK_PERIOD_MS);
+            frameDelay((*getImage()).frames[0].duration / steps);
         }
 
     } else if ((*getImage()).framesCount > 1) {
@@ -322,7 +304,7 @@ void processImage() {
             if (ledsOn) {
                 showFrame((*getImage()).frames[i].pixels);
             }
-            vTaskDelay((*getImage()).frames[i].duration / portTICK_PERIOD_MS);
+            frameDelay((*getImage()).frames[i].duration);
         }
     }
 }
@@ -331,7 +313,8 @@ void plateUpdateTask(void *pvParameters) {
     ESP_ERROR_CHECK(gpio_set_direction(26, GPIO_MODE_OUTPUT));
     ESP_ERROR_CHECK(gpio_set_level(26, 1));
     initPlate();
-    vSemaphoreCreateBinary(xSemaphore);
+    xSemaphore = xSemaphoreCreateBinary();
+    xSemaphoreGive(xSemaphore); // binary semaphores start taken
     ESP_LOGI(TAG, "Show plate");
     while (1) {
         tickNextBaseImage();
@@ -339,9 +322,20 @@ void plateUpdateTask(void *pvParameters) {
     }
 }
 
-void updateImageToShowCustom() {
-    showCustom = true;
-    settedCustom = true;
+// Installs an uploaded picture and switches to it. During a status image it
+// goes to the stash, so ending the status image shows it instead of losing it.
+void set_custom_image(const Image *image) {
+    bool locked = lock_display();
+    if (status_active) {
+        imageToTmp = *image;
+        saved_show_custom = saved_setted_custom = true;
+    } else {
+        imageToShow = *image;
+        showCustom = settedCustom = true;
+        step = 0;
+    }
+    if (locked)
+        unlock_display();
 }
 
 Image *getImageToShowCustom() { return &imageToShow; }
@@ -375,6 +369,10 @@ void setTurboBrightness() {
 
 void switchLeds() {
     updateLastActivity();
+    if (status_active) {
+        saved_leds_on = !saved_leds_on;
+        return;
+    }
     if (ledsOn) {
         ledsOn = false;
         showBlackFrame();
@@ -383,76 +381,107 @@ void switchLeds() {
     }
 }
 
-void reset_showImage(bool tmp) {
-    if (tmp) {
-        imageToShow = imageToTmp;
-        settedCustom = true;
-        return;
-    }
-    showCustom = false;
-    settedCustom = false;
-}
-
 void switchCustom() {
     updateLastActivity();
+    if (status_active) {
+        if (saved_setted_custom)
+            saved_show_custom = !saved_show_custom;
+        return;
+    }
     if (settedCustom) {
         showCustom = !showCustom;
     }
 }
 
-void showInt(uint64_t pass, uint8_t r, uint8_t g, uint8_t b) {
+// Shows a number as bars: row k holds the k-th digit (most significant first),
+// with as many lit pixels as the digit's value. Up to 10 digits.
+void show_number_image(uint64_t number, uint8_t r, uint8_t g, uint8_t b) {
+    static Image digits;
+    uint8_t value[10];
+    int count = 0;
     updateLastActivity();
-    ledsOn = false;
+    for (; number != 0 && count < 10; number /= 10)
+        value[count++] = number % 10;
+    memset(&digits, 0, sizeof(digits));
+    digits.framesCount = 1;
+    digits.frames[0].duration = 1000;
+    for (int row = 0; row < count; row++)
+        for (int column = 0; column < value[count - 1 - row]; column++)
+            digits.frames[0].pixels[row * 10 + column] = (Pixel){r, g, b};
+    show_status_image(&digits, 0);
+}
 
-    ESP_LOGI(TAG, "pass  %llu", pass);
-    int arr[10];
-    int i = 0;
-    int rr;
+// Callers of the *_locked helpers hold the display lock (when it exists yet).
+static void begin_status_locked(void) {
+    if (status_active)
+        return;
+    imageToTmp = imageToShow;
+    saved_show_custom = showCustom;
+    saved_setted_custom = settedCustom;
+    saved_leds_on = ledsOn;
+    status_active = true;
+}
 
-    while (pass != 0) {
-        rr = pass % 10;
-        arr[i] = rr;
-        i++;
-        pass = pass / 10;
-    }
-
-    for (size_t iii = 0; iii < 10; iii++) {
-        ESP_LOGI(TAG, " %d", arr[iii]);
-    }
-
-    for (size_t itt = 0; itt < LED_STRIP_LED_COUNT; itt++) {
-        frameBuffer[itt] = (Pixel){0, 0, 0};
-    }
-
-    for (int j = i; j > 0; j--) {
-        for (int ii = 0; ii < arr[j - 1]; ii++) {
-            frameBuffer[(i - j) * 10 + ii] = (Pixel){r, g, b};
-        }
-    }
-
-    showFrame(frameBuffer);
-    vTaskDelay(15000 / portTICK_PERIOD_MS);
+static void show_status_image(const Image *image, uint8_t shift_mode) {
+    bool locked = lock_display();
+    begin_status_locked();
+    imageToShow = *image;
+    imageToShow.shiftMode = shift_mode;
+    showCustom = true;
     ledsOn = true;
     step = 0;
+    if (locked)
+        unlock_display();
+}
+
+bool status_image_active(void) { return status_active; }
+
+void end_status_image(void) {
+    bool locked = lock_display();
+    bool screen_off = false;
+    if (status_active) {
+        imageToShow = imageToTmp;
+        showCustom = saved_show_custom;
+        settedCustom = saved_setted_custom;
+        ledsOn = saved_leds_on;
+        screen_off = !ledsOn;
+        step = 0;
+        status_active = false;
+    }
+    if (locked)
+        unlock_display();
+    if (screen_off)
+        showBlackFrame();
 }
 
 void set_ota_display_image(uint8_t state) {
     switch (state) {
     case 0:
-        imageToShow = loadImage;
+        show_status_image(&loadImage, 4); // scroll the download arrow down
         break;
     case 1:
-        imageToShow = successImage;
+        show_status_image(&successImage, successImage.shiftMode);
         break;
     case 2:
-        imageToShow = errorImage;
+        show_status_image(&errorImage, errorImage.shiftMode);
         break;
-    default:
-        return;
     }
-    showCustom = true;
-    ledsOn = true;
-    step = 0;
+}
+
+// Fills the 10x10 screen one pixel per percent, with a blinking leading pixel.
+void show_update_progress(uint8_t percent) {
+    static Image progress;
+    uint8_t lit = percent > LED_STRIP_LED_COUNT ? LED_STRIP_LED_COUNT : percent;
+    progress.framesCount = 2;
+    progress.shiftMode = 0;
+    for (size_t f = 0; f < progress.framesCount; f++) {
+        progress.frames[f].duration = 300;
+        for (size_t i = 0; i < LED_STRIP_LED_COUNT; i++)
+            progress.frames[f].pixels[i] = i < lit ? (Pixel){0, 255, 0} : (Pixel){0, 0, 0};
+    }
+    if (lit < LED_STRIP_LED_COUNT)
+        progress.frames[0].pixels[lit] = (Pixel){255, 255, 255};
+    show_status_image(&progress, 0);
 }
 
 uint8_t getSettedCustom() {
@@ -489,28 +518,14 @@ void restoreShowCustom(uint8_t state) {
 void switchAutoFade() { autoFadeLeds = !autoFadeLeds; }
 
 void switchLedsShiter() {
-    if (imageToShow.shiftMode >= 6)
-        imageToShow.shiftMode = 0;
-    else
-        imageToShow.shiftMode++;
-
+    // Cycle through the implemented modes only (0 still, 1-4 scroll, 5 breathe).
+    Image *image = status_active ? &imageToTmp : &imageToShow;
+    image->shiftMode = image->shiftMode >= SHIFT_MODE_MAX ? 0 : image->shiftMode + 1;
     step = 0;
-    ESP_LOGI(TAG, "shiftMode: %i", imageToShow.shiftMode);
+    ESP_LOGI(TAG, "shiftMode: %i", image->shiftMode);
 }
 
 void set_power_display_image(uint8_t percent) {
-    if (percent <= 30) {
-        imageToShow = lowBattery;
-    } else if (percent > 30 && percent <= 60) {
-        imageToShow = mediumBattery;
-    } else if (percent > 60 && percent <= 90) {
-        imageToShow = greenBattery;
-    } else {
-        imageToShow = fullBattery;
-    }
-    showCustom = true;
-    ledsOn = true;
-    step = 0;
+    const Image *image = percent <= 30 ? &lowBattery : percent <= 60 ? &mediumBattery : percent <= 90 ? &greenBattery : &fullBattery;
+    show_status_image(image, image->shiftMode);
 }
-
-void save_img_custom() { imageToTmp = imageToShow; }

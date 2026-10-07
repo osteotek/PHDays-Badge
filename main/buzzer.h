@@ -1,5 +1,6 @@
 #pragma once
 
+#include "driver/gpio.h"
 #include "driver/ledc.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"

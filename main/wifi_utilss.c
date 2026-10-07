@@ -1,3 +1,4 @@
+#include "dhcpserver/dhcpserver.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_random.h"
@@ -6,7 +7,7 @@
 #include "home_wifi.h"
 #include "nvs_utils.h"
 #include <inttypes.h>
-#include <mbedtls/md.h>
+#include <psa/crypto.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
@@ -20,9 +21,22 @@
 
 #define STORAGE_NAMESPACE "storage"
 
-static const char *TAG = "wifi softAP";
+// With home Wi-Fi configured the badge runs as a station only. The hotspot is a
+// fallback: it starts when home Wi-Fi has no IP for HOTSPOT_FALLBACK_DELAY_US and
+// stops once home Wi-Fi connects again.
+#define HOTSPOT_FALLBACK_DELAY_US (120 * 1000000LL)
+#define RECONNECT_DELAY_US (5 * 1000000LL)
+// Each connection attempt scans all channels and briefly disrupts hotspot
+// clients, so retry less often while someone may be using the hotspot.
+#define RECONNECT_DELAY_HOTSPOT_US (30 * 1000000LL)
+
+static const char *TAG = "wifi";
 static bool home_wifi_configured;
+static bool hotspot_active;
+static bool home_connected;
 static esp_timer_handle_t reconnect_timer;
+static esp_timer_handle_t fallback_timer;
+static wifi_config_t wifi_config_ap;
 uint8_t wifiClientConnectCounter = 0;
 
 unsigned char ESP_WIFI_SSID[16] = "phd2_1234567890";
@@ -31,14 +45,57 @@ uint8_t ESP_WIFI_SSID_bytes[4] = {0};
 unsigned char ESP_WIFI_PASS[11] = "1234567890";
 uint64_t ESP_WIFI_PASS_LONG = 0;
 
+static void schedule_reconnect(void) {
+    if (home_wifi_configured && !esp_timer_is_active(reconnect_timer))
+        esp_timer_start_once(reconnect_timer, hotspot_active ? RECONNECT_DELAY_HOTSPOT_US : RECONNECT_DELAY_US);
+}
+
 static void connect_home_wifi(void *arg) {
     if (!home_wifi_configured)
         return;
     esp_err_t err = esp_wifi_connect();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Wi-Fi connection attempt failed: %s", esp_err_to_name(err));
-        esp_timer_start_once(reconnect_timer, 5000000);
+        schedule_reconnect();
     }
+}
+
+static esp_err_t start_hotspot(void) {
+    if (hotspot_active)
+        return ESP_OK;
+    esp_err_t err = esp_wifi_set_mode(home_wifi_configured ? WIFI_MODE_APSTA : WIFI_MODE_AP);
+    if (err == ESP_OK)
+        err = esp_wifi_set_config(WIFI_IF_AP, &wifi_config_ap);
+    if (err == ESP_OK)
+        err = esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+    if (err == ESP_OK)
+        err = esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW40);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Could not start hotspot: %s", esp_err_to_name(err));
+        return err;
+    }
+    hotspot_active = true;
+    ESP_LOGI(TAG, "Hotspot on. SSID:%s; Wi-Fi setup: http://192.168.4.1/wifi", ESP_WIFI_SSID);
+    return ESP_OK;
+}
+
+static void stop_hotspot(void) {
+    if (!hotspot_active)
+        return;
+    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Could not stop hotspot: %s", esp_err_to_name(err));
+        return;
+    }
+    hotspot_active = false;
+    ESP_LOGI(TAG, "Hotspot off; home Wi-Fi connected");
+}
+
+static void hotspot_fallback(void *arg) {
+    if (home_connected)
+        return;
+    ESP_LOGW(TAG, "Home Wi-Fi unavailable for %lld s; starting hotspot", HOTSPOT_FALLBACK_DELAY_US / 1000000);
+    start_hotspot();
 }
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
@@ -55,9 +112,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         connect_home_wifi(NULL);
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t *event = event_data;
-        ESP_LOGW(TAG, "Home Wi-Fi disconnected (reason %u); retrying in 5 seconds", event->reason);
-        if (home_wifi_configured && !esp_timer_is_active(reconnect_timer))
-            esp_timer_start_once(reconnect_timer, 5000000);
+        home_connected = false;
+        ESP_LOGW(TAG, "Home Wi-Fi disconnected (reason %u); retrying in %d seconds", event->reason, hotspot_active ? 30 : 5);
+        schedule_reconnect();
+        if (home_wifi_configured && !hotspot_active && !esp_timer_is_active(fallback_timer))
+            esp_timer_start_once(fallback_timer, HOTSPOT_FALLBACK_DELAY_US);
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_SCAN_DONE) {
         ESP_LOGI(TAG, "sta scan done");
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
@@ -66,6 +125,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "Home Wi-Fi ready. Open http://" IPSTR "/", IP2STR(&event->ip_info.ip));
+        home_connected = true;
+        esp_timer_stop(fallback_timer);
+        stop_hotspot();
     }
 }
 
@@ -91,28 +153,16 @@ uint32_t lenHelper(uint32_t x) {
     return 1;
 }
 
-uint32_t getNewInt() {
-    uint32_t randNum = esp_random();
-    while (true) {
-        if (randNum > 100000)
-            return randNum;
-        else
-            randNum = esp_random();
-    }
-}
+// Hotspot passwords are 8-10 digit numbers: WPA2 needs at least 8 characters,
+// and the badge can display (and ESP_WIFI_PASS holds) at most 10 digits.
+#define AP_PASSWORD_MIN 10000000ULL
+#define AP_PASSWORD_LIMIT 10000000000ULL
+
+static bool valid_ap_password(uint64_t password) { return password >= AP_PASSWORD_MIN && password < AP_PASSWORD_LIMIT; }
 
 uint64_t getNewWifiPassword() {
-    uint32_t randNum = esp_random();
-    ESP_LOGI(TAG, "%lu", randNum);
-    for (uint8_t i = 0; i < 250; i++) {
-        randNum = esp_random();
-        ESP_LOGI(TAG, "%lu", randNum);
-    }
-    uint32_t pwd_low = getNewInt() % 100000;
-    uint32_t pwd_high = getNewInt() % 100000;
-    uint64_t full_pwd = pwd_high * 100000 + pwd_low;
-    ESP_LOGI(TAG, "pwd_full_new: %llu", full_pwd);
-    return full_pwd;
+    uint64_t random = ((uint64_t)esp_random() << 32) | esp_random();
+    return AP_PASSWORD_MIN + random % (AP_PASSWORD_LIMIT - AP_PASSWORD_MIN);
 }
 
 uint64_t getWifiPassword() {
@@ -127,24 +177,16 @@ uint64_t getWifiPassword() {
 
     uint64_t storedPasswd = 0;
     err = nvs_get_u64(my_handle, "ap_password", &storedPasswd);
-    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND)
-        return newPasswd;
-
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
-        err = nvs_set_u64(my_handle, "ap_password", newPasswd);
-        if (err != ESP_OK)
-            return newPasswd;
-        resPasswd = newPasswd;
-    } else {
+    if (err == ESP_OK && valid_ap_password(storedPasswd)) {
         resPasswd = storedPasswd;
+    } else {
+        // Missing, or too short from an older generator that overflowed: replace it.
+        resPasswd = newPasswd;
+        if ((err == ESP_OK || err == ESP_ERR_NVS_NOT_FOUND) && nvs_set_u64(my_handle, "ap_password", newPasswd) == ESP_OK)
+            nvs_commit(my_handle);
+        ESP_LOGI(TAG, "Generated a new hotspot password");
     }
-
-    err = nvs_commit(my_handle);
-    if (err != ESP_OK)
-        return resPasswd;
-
     nvs_close(my_handle);
-    ESP_LOGI(TAG, "pwd_full_restored: %llu", resPasswd);
     return resPasswd;
 }
 
@@ -160,20 +202,24 @@ void getDeviceId() {
     char *payload = (char *)mac_base;
     u_char hmacResult[32];
 
-    mbedtls_md_context_t ctx;
-    mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
-
     // A MAC address is six binary bytes, not a NUL-terminated string. Hashing
     // past it made the fallback hotspot name depend on unrelated stack data.
     const size_t payloadLength = sizeof(mac_base);
     const size_t keyLength = strlen(key);
 
-    mbedtls_md_init(&ctx);
-    mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 1);
-    mbedtls_md_hmac_starts(&ctx, (const unsigned char *)key, keyLength);
-    mbedtls_md_hmac_update(&ctx, (const unsigned char *)payload, payloadLength);
-    mbedtls_md_hmac_finish(&ctx, hmacResult);
-    mbedtls_md_free(&ctx);
+    // HMAC-SHA256(key, MAC) via PSA; mbedTLS 4 removed the mbedtls_md_hmac_* API.
+    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_type(&attributes, PSA_KEY_TYPE_HMAC);
+    psa_set_key_algorithm(&attributes, PSA_ALG_HMAC(PSA_ALG_SHA_256));
+    psa_set_key_usage_flags(&attributes, PSA_KEY_USAGE_SIGN_MESSAGE);
+    psa_key_id_t key_id;
+    size_t hmacLength = 0;
+    psa_status_t status = psa_import_key(&attributes, (const uint8_t *)key, keyLength, &key_id);
+    if (status == PSA_SUCCESS) {
+        status = psa_mac_compute(key_id, PSA_ALG_HMAC(PSA_ALG_SHA_256), (const uint8_t *)payload, payloadLength, hmacResult, sizeof(hmacResult), &hmacLength);
+        psa_destroy_key(key_id);
+    }
+    ESP_ERROR_CHECK(status == PSA_SUCCESS ? ESP_OK : ESP_FAIL);
 
     uint32_t ssid = lenHelper(hmacResult[0] | (hmacResult[1] << 8) | (hmacResult[2] << 16) | (hmacResult[3] << 24));
 
@@ -184,20 +230,35 @@ void getDeviceId() {
     ESP_WIFI_SSID_bytes[1] = hmacResult[1];
     ESP_WIFI_SSID_bytes[2] = hmacResult[2];
     ESP_WIFI_SSID_bytes[3] = hmacResult[3];
-    sprintf((char *)ESP_WIFI_SSID, "phd2_%lu", ssid);
-    sprintf((char *)ESP_WIFI_PASS, "%llu", pwd);
+    snprintf((char *)ESP_WIFI_SSID, sizeof(ESP_WIFI_SSID), "phd2_%lu", ssid);
+    snprintf((char *)ESP_WIFI_PASS, sizeof(ESP_WIFI_PASS), "%llu", pwd);
     ESP_WIFI_PASS_LONG = pwd;
     ESP_WIFI_SSID_INT = ssid;
 }
 
 void wifi_init_softap(void) {
 
-    esp_netif_create_default_wifi_ap();
+    esp_netif_t *ap = esp_netif_create_default_wifi_ap();
+
+    // ESP-IDF 6 no longer offers the AP address as DNS by default
+    // (CONFIG_LWIP_DHCPS_ADD_DNS was removed). Hotspot clients must use the
+    // badge's captive-portal DNS server, so advertise it explicitly.
+    esp_netif_ip_info_t ap_ip;
+    ESP_ERROR_CHECK(esp_netif_get_ip_info(ap, &ap_ip));
+    esp_netif_dns_info_t ap_dns = {.ip = {.type = ESP_IPADDR_TYPE_V4, .u_addr.ip4 = ap_ip.ip}};
+    dhcps_offer_t offer_dns = OFFER_DNS;
+    ESP_ERROR_CHECK(esp_netif_dhcps_stop(ap));
+    ESP_ERROR_CHECK(esp_netif_dhcps_option(ap, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &offer_dns, sizeof(offer_dns)));
+    ESP_ERROR_CHECK(esp_netif_set_dns_info(ap, ESP_NETIF_DNS_MAIN, &ap_dns));
+    ESP_ERROR_CHECK(esp_netif_dhcps_start(ap));
+
     esp_netif_t *sta = esp_netif_create_default_wifi_sta();
     ESP_ERROR_CHECK(esp_netif_set_hostname(sta, "phdays-badge"));
 
     const esp_timer_create_args_t reconnect_args = {.callback = connect_home_wifi, .name = "wifi_reconnect"};
     ESP_ERROR_CHECK(esp_timer_create(&reconnect_args, &reconnect_timer));
+    const esp_timer_create_args_t fallback_args = {.callback = hotspot_fallback, .name = "hotspot_fallback"};
+    ESP_ERROR_CHECK(esp_timer_create(&fallback_args, &fallback_timer));
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -206,7 +267,7 @@ void wifi_init_softap(void) {
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, NULL));
 
-    wifi_config_t wifi_config_ap = {
+    wifi_config_ap = (wifi_config_t){
         .ap =
             {
                 .ssid_len = strlen((const char *)ESP_WIFI_SSID),
@@ -238,22 +299,29 @@ void wifi_init_softap(void) {
         wifi_config_ap.ap.authmode = WIFI_AUTH_OPEN;
     }
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(home_wifi_configured ? WIFI_MODE_APSTA : WIFI_MODE_AP));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config_ap));
-
-    ESP_ERROR_CHECK(esp_wifi_set_protocol(WIFI_IF_AP, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N));
-
-    ESP_ERROR_CHECK(esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT40));
+    if (home_wifi_configured) {
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config_sta));
+        ESP_ERROR_CHECK(esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW20));
+    } else {
+        ESP_ERROR_CHECK(start_hotspot());
+    }
+    // Use normal adaptive transmit rates/power for reliable home-network range.
+    ESP_ERROR_CHECK(esp_wifi_start());
 
     if (home_wifi_configured) {
-        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config_sta));
-        ESP_ERROR_CHECK(esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20));
+        ESP_LOGI(TAG, "Joining home Wi-Fi; hotspot starts if it is unavailable for %lld s", HOTSPOT_FALLBACK_DELAY_US / 1000000);
+        ESP_ERROR_CHECK(esp_timer_start_once(fallback_timer, HOTSPOT_FALLBACK_DELAY_US));
+    } else {
+        ESP_LOGI(TAG, "No home Wi-Fi configured; hotspot only");
     }
-    ESP_ERROR_CHECK(esp_wifi_start());
-    // Use normal adaptive transmit rates/power for reliable home-network range.
-
-    ESP_LOGI(TAG, "Hotspot ready. SSID:%s; Wi-Fi setup: http://192.168.4.1/wifi", ESP_WIFI_SSID);
 }
+
+bool wifi_home_configured(void) { return home_wifi_configured; }
+
+bool wifi_home_connected(void) { return home_connected; }
+
+bool wifi_hotspot_active(void) { return hotspot_active; }
 
 void initWiFi() {
     getDeviceId();

@@ -10,6 +10,8 @@
 
 #define NOTE_BUFFER_SIZE 1024
 #define MAX_NOTES 100
+// Octaves above 8 overflow the frequency calculation.
+#define RTTTL_MAX_OCTAVE 8
 
 static bool is_buzzer = true;
 
@@ -256,9 +258,10 @@ bool parse_note(const char *token, Note *n) {
 
     if (n->note == '\0')
         return 0;
-    if (n->duration > 32)
+    // Durations divide the beat length, so 0 would divide by zero.
+    if (n->duration == 0 || n->duration > 32)
         return 0;
-    if (n->octave > 32)
+    if (n->octave > RTTTL_MAX_OCTAVE)
         return 0;
     return 1;
 }
@@ -280,12 +283,16 @@ int parse_rtttl(const char *rtttl, uint16_t len) {
     ptr++; // skip first ":" symbol
 
     find_default_val(&ptr, &default_duration, &default_octave, &bpm);
+    if (bpm == 0 || default_duration == 0 || default_duration > 32 || default_octave > RTTTL_MAX_OCTAVE)
+        return -1;
 
     ptr = strchr(ptr, ':'); // find second ":" symbol
 
     ptr++; // skip second ":" symbol
 
-    strcpy(notes_buf, ptr);
+    // The request body can be far larger than the notes buffer: reject, don't overflow.
+    if (strlcpy(notes_buf, ptr, sizeof(notes_buf)) >= sizeof(notes_buf))
+        return -1;
     char *token = strtok(notes_buf, ",");
     // Note notes[MAX_NOTES];
     uint8_t count_notes = 0;
