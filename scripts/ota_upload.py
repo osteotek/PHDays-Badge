@@ -46,7 +46,7 @@ def main():
     except OSError as e:
         # The upload may still have succeeded; the reply can be lost on a weak link.
         sys.exit(f"No reply from the badge ({e}). If it restarted, the update may have installed;"
-                 f" check http://{host}/api/v1/system/info")
+                 f" check http://{host}/api/v1/status")
     print(f"Badge: {response.status} {body}")
     sys.exit(0 if response.status == 200 else 1)
 

@@ -1,7 +1,0 @@
-.eraser {
-  @mixin icon eraser;
-
-  &:hover {
-    cursor: pointer;
-  }
-}

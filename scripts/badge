@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+# Control the PHDays badge info display from the terminal.
+# Needs curl and jq. Works with macOS's bash 3.2.
+
+set -euo pipefail
+
+HOST="${BADGE_HOST:-phdays-badge.local}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+usage() {
+    cat <<'EOF'
+Usage: badge [-H host] <command> [arguments]
+
+  status                  time, weather, timer, screen, battery, firmware
+  timer [status]          Pomodoro timer state
+  timer start|stop|skip   start a focus phase, stop, or end the current phase
+  timer watch             live countdown (Ctrl-C to quit)
+  screen on|off|toggle    switch the LEDs
+  screen next             skip to the next screen
+  brightness [1-15]       show or set the brightness
+  night [on|off]          show or switch night mode
+  night FROM UNTIL [0-15] set the night window and brightness (0 = off), e.g. night 23:00 07:00 1
+  settings                show all settings
+  set key=value ...       change settings, e.g. set focus_minutes=50 show_weather=false
+  say [-c #rrggbb] [-r N] [-s] TEXT
+                          scroll a message N times (default 2), -s plays the alert melody
+  melodies                list saved melodies
+  play <name|RTTTL>       play a saved melody by name, or RTTTL text
+  update                  build and install the firmware over Wi-Fi (PlatformIO)
+
+The badge address comes from -H or $BADGE_HOST (default phdays-badge.local).
+EOF
+}
+
+die() {
+    echo "badge: $*" >&2
+    exit 1
+}
+
+command -v jq >/dev/null || die "jq is required (brew install jq)"
+
+# request METHOD PATH [JSON]: prints the response body, fails on HTTP errors.
+request() {
+    local args=(-sS --compressed --max-time 15 -X "$1" -w '\n%{http_code}')
+    if [ $# -ge 3 ]; then
+        args+=(-H 'Content-Type: application/json' --data "$3")
+    fi
+    local response
+    response=$(curl "${args[@]}" "http://$HOST$2") || die "badge unreachable at $HOST"
+    local code="${response##*$'\n'}"
+    local body="${response%$'\n'*}"
+    case "$code" in
+    2*) printf '%s\n' "$body" ;;
+    *) die "${body:-HTTP $code}" ;;
+    esac
+}
+
+action_json() { jq -cn --arg action "$1" '{action: $action}'; }
+
+# Shared jq helpers: minutes:seconds and WMO weather codes.
+JQ_DEFS='
+def mmss: "\(. / 60 | floor):\(. % 60 | tostring | if length < 2 then "0" + . else . end)";
+def wmo: if . == 0 then "clear"
+    elif . <= 2 then "partly cloudy"
+    elif . == 3 then "overcast"
+    elif . == 45 or . == 48 then "fog"
+    elif . >= 51 and . <= 57 then "drizzle"
+    elif (. >= 61 and . <= 67) or (. >= 80 and . <= 82) then "rain"
+    elif (. >= 71 and . <= 77) or . == 85 or . == 86 then "snow"
+    elif . >= 95 then "thunderstorm"
+    else "cloudy" end;
+def timer_text: if .phase == "idle" then "idle"
+    else "\(.phase) \(.remaining_s | mmss) left of \(.total_s | mmss)" end;
+'
+
+show_status() {
+    request GET /api/v1/status | jq -r "$JQ_DEFS"'
+        "Time:      \(.time // "not synced yet")",
+        "Weather:   \(if .weather.valid then
+                "\(.weather.temperature | round)°C, \(.weather.code | wmo)\(if .weather.is_day then "" else " (night)" end)\(if .weather.high then ", today \(.weather.low | round) to \(.weather.high | round)°C" else "" end), updated \(.weather.age_s / 60 | floor) min ago"
+            elif .weather.configured then "waiting for data"
+            else "no location in wifi_secrets.ini" end)",
+        "Timer:     \(.timer | timer_text)",
+        "Screen:    \(.screen)\(if .screen_on then "" else " (LEDs off)" end)\(if .night then " (night mode)" else "" end)",
+        "Battery:   \(.battery)%",
+        "Firmware:  \(.app_version)"'
+}
+
+timer() {
+    case "${1:-status}" in
+    status)
+        request GET /api/v1/status | jq -r "$JQ_DEFS"'.timer | timer_text'
+        ;;
+    start | stop | skip)
+        request POST /api/v1/timer "$(action_json "$1")" | jq -r "$JQ_DEFS"'timer_text'
+        ;;
+    watch)
+        trap 'printf "\n"; exit 0' INT
+        while true; do
+            printf '\r\033[K%s' "$(request GET /api/v1/status | jq -r "$JQ_DEFS"'.timer | timer_text')"
+            sleep 1
+        done
+        ;;
+    *) die "timer: expected status, start, stop, skip or watch" ;;
+    esac
+}
+
+screen() {
+    case "${1:-}" in
+    on | off | toggle)
+        request POST /api/v1/screen "$(action_json "$1")" | jq -r '"LEDs \(if .screen_on then "on" else "off" end)"'
+        ;;
+    next)
+        request POST /api/v1/screen "$(action_json next)" >/dev/null
+        echo "Skipped to the next screen"
+        ;;
+    *) die "screen: expected on, off, toggle or next" ;;
+    esac
+}
+
+# set key=value ...: numbers and true/false become JSON numbers and booleans.
+set_settings() {
+    [ $# -gt 0 ] || die "set: expected key=value"
+    local json='{}' pair
+    for pair in "$@"; do
+        case "$pair" in
+        *=*) ;;
+        *) die "set: '$pair' is not key=value" ;;
+        esac
+        json=$(jq -c --arg key "${pair%%=*}" --arg value "${pair#*=}" \
+            '. + {($key): ($value | if test("^-?[0-9]+$") then tonumber
+                                    elif . == "true" then true
+                                    elif . == "false" then false
+                                    else . end)}' <<<"$json")
+    done
+    request POST /api/v1/settings "$json" | jq .
+}
+
+brightness() {
+    if [ $# -eq 0 ]; then
+        request GET /api/v1/settings | jq -r '.brightness'
+    else
+        request POST /api/v1/settings "$(jq -cn --argjson b "$1" '{brightness: $b}')" | jq -r '"Brightness \(.brightness)"'
+    fi
+}
+
+night() {
+    case "${1:-}" in
+    "") ;;
+    on | off)
+        local enabled=false
+        [ "$1" = on ] && enabled=true
+        request POST /api/v1/settings "$(jq -cn --argjson on "$enabled" '{night_mode: $on}')" >/dev/null
+        ;;
+    *:*)
+        [ $# -ge 2 ] || die "night: expected FROM UNTIL [brightness], e.g. night 23:00 07:00 1"
+        local json
+        json=$(jq -cn --arg from "$1" --arg until "$2" '{night_mode: true, night_start: $from, night_end: $until}')
+        [ $# -ge 3 ] && json=$(jq -c --argjson b "$3" '. + {night_brightness: $b}' <<<"$json")
+        request POST /api/v1/settings "$json" >/dev/null
+        ;;
+    *) die "night: expected on, off or FROM UNTIL [brightness]" ;;
+    esac
+    request GET /api/v1/settings | jq -r '"Night mode \(if .night_mode then "on" else "off" end): \(.night_start)-\(.night_end), brightness \(if .night_brightness == 0 then "off" else .night_brightness end)"'
+}
+
+say() {
+    local color="" repeat=2 sound=false
+    local OPTIND=1 option
+    while getopts ":c:r:s" option; do
+        case "$option" in
+        c) color="$OPTARG" ;;
+        r) repeat="$OPTARG" ;;
+        s) sound=true ;;
+        *) die "say: usage: badge say [-c #rrggbb] [-r N] [-s] TEXT" ;;
+        esac
+    done
+    shift $((OPTIND - 1))
+    [ $# -gt 0 ] || die "say: expected text"
+    local json
+    json=$(jq -cn --arg text "$*" --arg color "$color" --argjson repeat "$repeat" --argjson sound "$sound" \
+        '{text: $text, repeat: $repeat, sound: $sound} + (if $color == "" then {} else {color: $color} end)')
+    request POST /api/v1/notify "$json" | jq -r '"Showing for \(.duration_ms / 1000 | round) s"'
+}
+
+melody_names() { request GET /api/v1/buzzer/melodies | jq -r '.melodies[]? | split(":")[0]'; }
+
+play() {
+    [ $# -gt 0 ] || die "play: expected a melody name or RTTTL text"
+    local melody="$*"
+    case "$melody" in
+    *:*:*) ;; # RTTTL text
+    *)
+        melody=$(request GET /api/v1/buzzer/melodies |
+            jq -r --arg name "$melody" 'first(.melodies[]? | select(split(":")[0] | ascii_downcase == ($name | ascii_downcase))) // empty')
+        [ -n "$melody" ] || die "no saved melody named '$*' (see: badge melodies)"
+        ;;
+    esac
+    request POST /api/v1/buzzer/melody "$(jq -cn --arg m "$melody" '{melody: $m}')" >/dev/null
+    echo "Playing $(printf '%s' "$melody" | cut -d: -f1)"
+}
+
+while getopts ":H:h" option; do
+    case "$option" in
+    H) HOST="$OPTARG" ;;
+    h)
+        usage
+        exit 0
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+    esac
+done
+shift $((OPTIND - 1))
+
+command="${1:-status}"
+[ $# -gt 0 ] && shift
+case "$command" in
+status) show_status ;;
+timer | pomodoro) timer "$@" ;;
+screen) screen "$@" ;;
+brightness) brightness "$@" ;;
+night) night "$@" ;;
+say) say "$@" ;;
+settings) request GET /api/v1/settings | jq . ;;
+set) set_settings "$@" ;;
+melodies) melody_names ;;
+play) play "$@" ;;
+update) cd "$ROOT" && pio run -e badge-ota -t upload --upload-port "$HOST" ;;
+help | -h | --help) usage ;;
+*)
+    usage >&2
+    exit 2
+    ;;
+esac

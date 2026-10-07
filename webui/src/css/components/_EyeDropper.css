@@ -1,7 +1,0 @@
-.eyedropper {
-  @mixin icon eyedropper;
-
-  &:hover {
-    cursor: pointer;
-  }
-}

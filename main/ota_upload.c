@@ -8,7 +8,7 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "home_wifi_secrets.h"
-#include "led_plate.h"
+#include "display.h"
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>

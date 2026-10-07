@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PHDays Badge</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>PHDays Badge</h1>
+        <p id="summary" class="muted">Connecting…</p>
+      </header>
+
+      <section class="card" aria-labelledby="now-title">
+        <h2 id="now-title">Now</h2>
+        <div class="now">
+          <div><span class="label">Time</span><span id="now-time" class="big">--:--</span></div>
+          <div><span class="label">Weather</span><span id="now-weather" class="big">–</span><span id="now-weather-note" class="muted"></span></div>
+        </div>
+        <div class="timer">
+          <div><span class="label">Timer</span><span id="timer-state" class="big">Idle</span></div>
+          <div class="buttons">
+            <button type="button" id="timer-start">Start focus</button>
+            <button type="button" id="timer-skip">Skip</button>
+            <button type="button" id="timer-stop">Stop</button>
+          </div>
+        </div>
+      </section>
+
+      <form id="message" class="card" aria-labelledby="message-title">
+        <h2 id="message-title">Message</h2>
+        <label>Text (A–Z, digits, punctuation) <input type="text" name="text" maxlength="127" required /></label>
+        <div class="row">
+          <label>Colour <input type="color" name="color" value="#ffffff" /></label>
+          <label>Times <input type="number" name="repeat" min="1" max="10" value="2" required /></label>
+        </div>
+        <label class="check"><input type="checkbox" name="sound" /> Play the alert melody</label>
+        <div class="buttons">
+          <button type="submit">Show on badge</button>
+          <span id="message-status" class="message" role="status"></span>
+        </div>
+      </form>
+
+      <form id="settings" class="card" aria-labelledby="settings-title">
+        <h2 id="settings-title">Screens</h2>
+        <label class="check"><input type="checkbox" name="show_clock" /> Clock</label>
+        <label class="check"><input type="checkbox" name="show_weather" /> Weather <span id="weather-hint" class="muted"></span></label>
+        <label class="check"><input type="checkbox" name="transitions" /> Matrix rain between screens</label>
+        <label>Seconds per screen <input type="number" name="screen_seconds" min="3" max="120" required /></label>
+        <label>Brightness <input type="range" name="brightness" min="1" max="15" /></label>
+        <label>Time zone (POSIX TZ) <input type="text" name="timezone" maxlength="47" required spellcheck="false" /></label>
+        <button type="button" id="use-browser-tz" class="link">Use this device's offset</button>
+
+        <h2>Night mode</h2>
+        <label class="check"><input type="checkbox" name="night_mode" /> Dim the screen at night</label>
+        <div class="row">
+          <label>From <input type="time" name="night_start" required /></label>
+          <label>Until <input type="time" name="night_end" required /></label>
+        </div>
+        <label>Night brightness <span id="night-brightness-value" class="muted"></span> <input type="range" name="night_brightness" min="0" max="15" /></label>
+
+        <h2>Pomodoro timer</h2>
+        <label>Focus minutes <input type="number" name="focus_minutes" min="1" max="180" required /></label>
+        <label>Break minutes <input type="number" name="break_minutes" min="1" max="60" required /></label>
+        <label>Alert melody <select name="alert_melody"></select></label>
+        <div class="buttons">
+          <button type="submit">Save settings</button>
+          <span id="settings-message" class="message" role="status"></span>
+        </div>
+      </form>
+
+      <section class="card" aria-labelledby="melodies-title">
+        <h2 id="melodies-title">Melodies</h2>
+        <label>Saved melodies <select id="melody-list"></select></label>
+        <label>RTTTL <textarea id="melody-text" rows="4" spellcheck="false"></textarea></label>
+        <p id="melody-note" class="muted"></p>
+        <div class="buttons">
+          <button type="button" id="melody-preview">Preview here</button>
+          <button type="button" id="melody-play">Play on badge</button>
+          <button type="button" id="melody-save">Save</button>
+          <button type="button" id="melody-delete">Delete</button>
+          <span id="melody-message" class="message" role="status"></span>
+        </div>
+      </section>
+
+      <footer class="muted">
+        <a href="/wifi">Wi-Fi settings</a> · Buttons: brightness · timer (click start/stop, hold skip, double-click battery) · screen (click
+        on/off, double-click next screen)
+      </footer>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

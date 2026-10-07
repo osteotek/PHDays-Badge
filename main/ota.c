@@ -4,8 +4,8 @@
 #include "esp_ota_ops.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "led_plate.h"
-#include "wifi_utilss.h"
+#include "display.h"
+#include "wifi.h"
 
 static const char *TAG = "ota";
 

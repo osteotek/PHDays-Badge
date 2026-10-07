@@ -1,9 +1,6 @@
 #pragma once
 
-#include <stdint.h>
-
-extern uint8_t brightnessSwitchCounter;
-extern uint8_t screenOffCounter;
-extern uint8_t modeSwitchCounter;
-
-void initButtons();
+// Brightness: click cycles brightness.
+// Timer: click start/stop Pomodoro, hold skip to the next phase, double-click battery.
+// Screen: click LEDs off/on, double-click next screen.
+void initButtons(void);

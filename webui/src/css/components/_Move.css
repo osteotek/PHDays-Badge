@@ -1,7 +1,0 @@
-.move {
-  @mixin icon move;
-
-  &:hover {
-    cursor: pointer;
-  }
-}

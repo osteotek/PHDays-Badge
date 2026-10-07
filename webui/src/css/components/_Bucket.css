@@ -1,7 +1,0 @@
-.bucket {
-  @mixin icon bucket;
-
-  &:hover {
-    cursor: pointer;
-  }
-}

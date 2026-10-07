@@ -135,7 +135,7 @@ static esp_err_t settings_status(httpd_req_t *req) {
 }
 
 static esp_err_t settings_save(httpd_req_t *req) {
-    // Configuration is available only through the password-protected hotspot.
+    // Configuration is available only through the (fallback) hotspot.
     // JSON-only requests, without CORS, also prevent cross-site form submissions.
     if (!request_on_hotspot(req))
         return httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "Connect to the badge hotspot to change Wi-Fi settings");

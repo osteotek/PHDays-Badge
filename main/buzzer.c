@@ -1,5 +1,6 @@
 #include "buzzer.h"
 #include "esp_log.h"
+#include "freertos/semphr.h"
 #include <ctype.h>
 #include <inttypes.h>
 #include <math.h>
@@ -14,6 +15,8 @@
 #define RTTTL_MAX_OCTAVE 8
 
 static bool is_buzzer = true;
+// parse_rtttl uses shared buffers; the web server and the timer both call it.
+static SemaphoreHandle_t parse_lock;
 
 static const char *kTag = "buzzer";
 
@@ -146,6 +149,7 @@ BaseType_t buzzer_beep(Buzzer *buzzer, uint32_t frequency, uint32_t duration_ms)
 }
 
 void init_buzzer() {
+    parse_lock = xSemaphoreCreateMutex();
     if (buzzer_init(&buzzer_handler, CONFIG_BUZZER, LEDC_AUTO_CLK, LEDC_LOW_SPEED_MODE, LEDC_TIMER_13_BIT, LEDC_TIMER_0, LEDC_CHANNEL_0, 0) != ESP_OK) {
         ESP_LOGE(kTag, "error init buzzer");
     }
@@ -266,7 +270,7 @@ bool parse_note(const char *token, Note *n) {
     return 1;
 }
 
-int parse_rtttl(const char *rtttl, uint16_t len) {
+static int parse_rtttl_unlocked(const char *rtttl, uint16_t len) {
     if (is_buzzer == false) {
         return -1;
     }
@@ -315,6 +319,14 @@ int parse_rtttl(const char *rtttl, uint16_t len) {
         buzzer_beep(&buzzer_handler, freq, duration);
     }
     return 0;
+}
+
+int parse_rtttl(const char *rtttl, uint16_t len) {
+    if (!parse_lock || xSemaphoreTake(parse_lock, portMAX_DELAY) != pdTRUE)
+        return -1;
+    int result = parse_rtttl_unlocked(rtttl, len);
+    xSemaphoreGive(parse_lock);
+    return result;
 }
 
 void disable_buzzer() { is_buzzer = false; }

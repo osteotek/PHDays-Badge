@@ -1,0 +1,146 @@
+:root {
+  color-scheme: light dark;
+  --accent: #e8590c;
+  --card: color-mix(in srgb, canvas 92%, canvastext 8%);
+  font: 16px/1.4 system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
+}
+
+h2:not(:first-child) {
+  margin-top: 1.25rem;
+}
+
+.card {
+  display: block;
+  margin: 1rem 0;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  background: var(--card);
+}
+
+.muted {
+  opacity: 0.7;
+  font-size: 0.9rem;
+}
+
+.label {
+  display: block;
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.big {
+  display: block;
+  font-size: 1.6rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.now,
+.timer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  align-items: end;
+}
+
+.timer {
+  margin-top: 1rem;
+}
+
+label {
+  display: block;
+  margin: 0.5rem 0;
+}
+
+label.check {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+input[type='number'],
+input[type='text'],
+select,
+textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.4rem;
+  font: inherit;
+}
+
+input[type='range'] {
+  display: block;
+  width: 100%;
+}
+
+textarea {
+  font-family: ui-monospace, monospace;
+}
+
+.row {
+  display: flex;
+  gap: 1rem;
+}
+
+.row label {
+  flex: 1;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.75rem;
+}
+
+button {
+  padding: 0.45rem 0.9rem;
+  border: 0;
+  border-radius: 0.4rem;
+  background: var(--accent);
+  color: white;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.link {
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.message.error {
+  color: #e03131;
+}
+
+a {
+  color: var(--accent);
+}

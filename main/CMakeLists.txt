@@ -1,3 +1,5 @@
-idf_component_register(SRCS "led_plate.c" "buzzer.c" "buttons.c" "rest_server.c" "main.c" "wifi_utilss.c" "home_wifi.c" "ota.c" "ota_upload.c" "nvs_utils.c" "adc_utils.c"
-                    INCLUDE_DIRS "ui"
-                    EMBED_FILES "ui/wifi.html" "ui/1.js.gz"  "ui/apple-touch-icon.png" "ui/epilepsy-sans.eot.gz" "ui/epilepsy-sans.svg.gz" "ui/epilepsy-sans.ttf.gz" "ui/epilepsy-sans.woff" "ui/epilepsy-sans.woff2" "ui/favicon.ico" "ui/index.html" "ui/main.css.gz" "ui/main.js.gz" "ui/webfont-icons.svg.gz" )
+idf_component_register(SRCS "main.c" "display.c" "screens.c" "settings.c" "clock_time.c" "weather.c" "timer.c"
+                            "info_api.c" "rest_server.c" "buttons.c" "buzzer.c" "adc_utils.c"
+                            "wifi.c" "home_wifi.c" "ota.c" "ota_upload.c"
+                    INCLUDE_DIRS "."
+                    EMBED_FILES "ui/index.html.gz" "ui/wifi.html")

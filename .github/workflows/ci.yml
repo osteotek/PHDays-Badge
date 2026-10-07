@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    name: Firmware
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: platformio-${{ runner.os }}-${{ hashFiles('platformio.ini', 'main/idf_component.yml', 'dependencies.lock') }}
+          restore-keys: platformio-${{ runner.os }}-
+      - name: Install PlatformIO
+        run: pip install platformio
+      # Without wifi_secrets.ini the build has no home network or update token:
+      # hotspot only, Wi-Fi updates off. That is enough to prove it compiles.
+      - name: Build
+        run: pio run -e badge
+
+  web-ui:
+    name: Web UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webui
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run build
+      # Catches webui/ changes without `python3 scripts/build_webui.py`.
+      - name: Embedded page matches the source
+        run: gunzip -c ../main/ui/index.html.gz | cmp - dist/index.html
+
+  host-tests:
+    name: Host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Screens
+        run: cc -std=c11 -Wall -Wextra -Werror -Imain tests/screens_test.c main/screens.c -lm -o screens_test && ./screens_test
+      - name: Hotspot Wi-Fi page
+        run: node --test tests/wifi-ui.test.cjs

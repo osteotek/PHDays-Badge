@@ -3,4 +3,5 @@ dependencies:
   espressif/led_strip: '^3.0.3'
   espressif/button: '^4.2.1'
   espressif/cjson: '^1.7.19'
+  espressif/mdns: '^1.14.0'
   joltwallet/littlefs: '^1.22.3'
