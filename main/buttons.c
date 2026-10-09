@@ -41,17 +41,33 @@ static void show_battery(void) {
     }
 }
 
-static void brightness_click_cb(void *arg, void *usr_data) { settings_cycle_brightness(); }
+// A press while the screen is asleep (auto-off) only wakes it.
+static void brightness_click_cb(void *arg, void *usr_data) {
+    if (!display_wake())
+        settings_cycle_brightness();
+}
 
-static void timer_click_cb(void *arg, void *usr_data) { timer_toggle(); }
+static void timer_click_cb(void *arg, void *usr_data) {
+    if (!display_wake())
+        timer_toggle();
+}
 
-static void timer_long_press_cb(void *arg, void *usr_data) { timer_skip(); }
+static void timer_long_press_cb(void *arg, void *usr_data) {
+    if (!display_wake())
+        timer_skip();
+}
 
-static void timer_double_click_cb(void *arg, void *usr_data) { show_battery(); }
+static void timer_double_click_cb(void *arg, void *usr_data) {
+    if (!display_wake())
+        show_battery();
+}
 
-static void screen_click_cb(void *arg, void *usr_data) { display_toggle_screen(); }
+static void screen_click_cb(void *arg, void *usr_data) { display_toggle_screen(); } // wakes, or switches the LEDs
 
-static void screen_double_click_cb(void *arg, void *usr_data) { display_next_screen(); }
+static void screen_double_click_cb(void *arg, void *usr_data) {
+    if (!display_wake())
+        display_next_screen();
+}
 
 static button_handle_t new_button(int gpio) {
     const button_config_t config = {0};

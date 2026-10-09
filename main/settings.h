@@ -16,6 +16,7 @@ typedef struct {
     bool power_save;  // automatic light sleep (slightly slower web page)
     uint8_t screen_seconds; // time per screen in the rotation
     uint8_t brightness;     // 1-15
+    uint8_t auto_off_minutes; // screen off after this long without a button press; 0 = never
     char timezone[SETTINGS_TIMEZONE_MAX]; // POSIX TZ, e.g. "MSK-3"
     uint8_t focus_minutes;
     uint8_t break_minutes;

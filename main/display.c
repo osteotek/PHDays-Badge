@@ -44,6 +44,10 @@ static volatile bool skip_screen;
 static volatile screen_id_t current_screen = SCREEN_CLOCK;
 static int64_t rotation_started_us;
 
+// Auto-off state: milliseconds since boot (wrapping) of the last activity.
+static volatile uint32_t last_activity_ms;
+static volatile bool asleep;
+
 // Screen shown in the last frame, and the Matrix rain transition (display task only).
 static bool have_previous;
 static screen_id_t previous_screen;
@@ -161,6 +165,28 @@ static int display_brightness(void) {
 
 bool display_night_active(void) { return night_active; }
 
+static uint32_t uptime_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
+
+bool display_wake(void) {
+    bool was_asleep = asleep;
+    last_activity_ms = uptime_ms();
+    asleep = false;
+    return was_asleep;
+}
+
+bool display_asleep(void) { return asleep; }
+
+static void update_auto_off(void) {
+    badge_settings_t settings;
+    settings_get(&settings);
+    screen_timer_t timer;
+    timer_get(&timer);
+    uint32_t now = uptime_ms();
+    if (timer.phase != TIMER_IDLE || !screen_on) // the idle time starts when the timer ends or the screen comes on
+        last_activity_ms = now;
+    asleep = settings.auto_off_minutes && now - last_activity_ms >= settings.auto_off_minutes * 60000u;
+}
+
 // The 100 WS2812s draw current even when black, so their supply (GPIO 26) is
 // switched off while the screen is dark and the frame resent once powered.
 static bool strip_powered = true;
@@ -241,15 +267,22 @@ void display_task(void *arg) {
         bool animating = !status && draw_screens(now_us, notifying ? hidden : frame);
         animating = animating || notifying;
         int brightness = display_brightness();
-        // Status images show even with the screen off or dark for the night.
-        push(frame, status || (screen_on && brightness > 0), status && brightness < 1 ? 1 : brightness);
+        update_auto_off();
+        // Status images show even with the screen off, asleep or dark for the night.
+        push(frame, status || (screen_on && !asleep && brightness > 0), status && brightness < 1 ? 1 : brightness);
         vTaskDelay(pdMS_TO_TICKS(animating ? TRANSITION_FRAME_MS : FRAME_MS));
     }
 }
 
-void display_toggle_screen(void) { screen_on = !screen_on; }
+void display_toggle_screen(void) {
+    if (!display_wake())
+        screen_on = !screen_on;
+}
 
-void display_set_screen(bool on) { screen_on = on; }
+void display_set_screen(bool on) {
+    display_wake();
+    screen_on = on;
+}
 
 void display_next_screen(void) { skip_screen = true; }
 
@@ -287,6 +320,7 @@ uint32_t display_notify(const char *text, Pixel color, int repeat) {
     notify_active = true;
     uint32_t duration = notify_duration_ms;
     xSemaphoreGive(lock);
+    display_wake();
     return duration;
 }
 

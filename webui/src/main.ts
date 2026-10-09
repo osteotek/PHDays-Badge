@@ -19,7 +19,7 @@ const describe = (error: unknown) => (error instanceof Error ? error.message : S
 // --- status -------------------------------------------------------------------
 
 function showStatus(status: Status) {
-  const screen = `${status.screen}${status.screen_on ? '' : ' (screen off)'}${status.night ? ' (night mode)' : ''}`;
+  const screen = `${status.screen}${status.screen_on ? (status.asleep ? ' (auto-off)' : '') : ' (screen off)'}${status.night ? ' (night mode)' : ''}`;
   $('#summary').textContent = `Firmware ${status.app_version} · battery ${status.battery}% (${(status.battery_mv / 1000).toFixed(2)} V) · showing ${screen}`;
   $('#now-time').textContent = status.time?.slice(0, 5) ?? '--:--';
   const weather = status.weather;
@@ -72,6 +72,7 @@ function fillSettings(settings: Settings) {
   field<HTMLInputElement>('power_save').checked = settings.power_save;
   field<HTMLInputElement>('screen_seconds').value = String(settings.screen_seconds);
   field<HTMLInputElement>('brightness').value = String(settings.brightness);
+  field<HTMLInputElement>('auto_off_minutes').value = String(settings.auto_off_minutes);
   field<HTMLInputElement>('timezone').value = settings.timezone;
   field<HTMLInputElement>('focus_minutes').value = String(settings.focus_minutes);
   field<HTMLInputElement>('break_minutes').value = String(settings.break_minutes);
@@ -92,6 +93,7 @@ function readSettings(): Partial<Settings> {
     power_save: field<HTMLInputElement>('power_save').checked,
     screen_seconds: Number(field<HTMLInputElement>('screen_seconds').value),
     brightness: Number(field<HTMLInputElement>('brightness').value),
+    auto_off_minutes: Number(field<HTMLInputElement>('auto_off_minutes').value),
     timezone: field<HTMLInputElement>('timezone').value.trim(),
     focus_minutes: Number(field<HTMLInputElement>('focus_minutes').value),
     break_minutes: Number(field<HTMLInputElement>('break_minutes').value),

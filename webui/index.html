@@ -51,6 +51,7 @@
         <label class="check"><input type="checkbox" name="power_save" /> Power saving (longer battery life, slightly slower page)</label>
         <label>Seconds per screen <input type="number" name="screen_seconds" min="3" max="120" required /></label>
         <label>Brightness <input type="range" name="brightness" min="1" max="15" /></label>
+        <label>Screen off after minutes without a button press (0 = never) <input type="number" name="auto_off_minutes" min="0" max="120" required /></label>
         <label>Time zone (POSIX TZ) <input type="text" name="timezone" maxlength="47" required spellcheck="false" /></label>
         <button type="button" id="use-browser-tz" class="link">Use this device's offset</button>
 

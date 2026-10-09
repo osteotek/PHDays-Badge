@@ -42,6 +42,11 @@ follow the screen switch and night mode, like the screens.
 example 23:00 to 07:00) once the clock is set; it is configured on the web page or
 with `badge night 23:00 07:00 1`.
 
+**Auto-off** switches the screen off after 5 minutes without a button press
+(a setting, 0 = never; `badge autooff 10`). Any button wakes it, and that first
+press only wakes it. Screen API actions, settings changes and messages also wake
+it, and a running timer keeps it on.
+
 **Battery**: power saving (on by default, a setting) runs the CPU at 80-160 MHz
 with automatic light sleep between frames and wakes on button presses instead of
 polling them; the LED supply is switched off while the screen is dark, since the
@@ -62,7 +67,7 @@ battery level.
 Open `http://phdays-badge.local/` (mDNS), or the badge's IP address: the router
 lists it as `phdays-badge`, and it is printed on the USB serial console. The page shows the time, weather and timer
 with start/skip/stop buttons, and edits the settings: enabled screens, seconds per
-screen, brightness, time zone, focus and break minutes, and the alert melody. The
+screen, brightness, auto-off, time zone, focus and break minutes, and the alert melody. The
 melodies section lists saved RTTTL melodies, previews them in the browser, plays
 them on the badge, and saves or deletes them.
 
@@ -80,6 +85,7 @@ scripts/badge status              # time, weather, timer, screen, battery
 scripts/badge timer start         # also: stop, skip, watch (live countdown)
 scripts/badge screen off          # also: on, toggle, next
 scripts/badge brightness 12
+scripts/badge autooff 10           # screen off after 10 idle minutes; 0 = never
 scripts/badge night 23:00 07:00 0  # LEDs off at night; also: night on|off
 scripts/badge set focus_minutes=50 break_minutes=10
 scripts/badge play Alert          # a saved melody, or RTTTL text

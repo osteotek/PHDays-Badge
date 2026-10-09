@@ -18,6 +18,7 @@ Usage: badge [-H host] <command> [arguments]
   screen on|off|toggle    switch the LEDs
   screen next             skip to the next screen
   brightness [1-15]       show or set the brightness
+  autooff [MINUTES]       show or set the screen auto-off (0 = never)
   night [on|off]          show or switch night mode
   night FROM UNTIL [0-15] set the night window and brightness (0 = off), e.g. night 23:00 07:00 1
   settings                show all settings
@@ -81,7 +82,7 @@ show_status() {
             elif .weather.configured then "waiting for data"
             else "no location in wifi_secrets.ini" end)",
         "Timer:     \(.timer | timer_text)",
-        "Screen:    \(.screen)\(if .screen_on then "" else " (LEDs off)" end)\(if .night then " (night mode)" else "" end)",
+        "Screen:    \(.screen)\(if .screen_on then (if .asleep then " (auto-off)" else "" end) else " (LEDs off)" end)\(if .night then " (night mode)" else "" end)",
         "Battery:   \(.battery)% (\(.battery_mv) mV)",
         "Firmware:  \(.app_version)"'
 }
@@ -142,6 +143,13 @@ brightness() {
     else
         request POST /api/v1/settings "$(jq -cn --argjson b "$1" '{brightness: $b}')" | jq -r '"Brightness \(.brightness)"'
     fi
+}
+
+autooff() {
+    if [ $# -gt 0 ]; then
+        request POST /api/v1/settings "$(jq -cn --argjson m "$1" '{auto_off_minutes: $m}')" >/dev/null
+    fi
+    request GET /api/v1/settings | jq -r 'if .auto_off_minutes == 0 then "Auto-off disabled" else "Screen off after \(.auto_off_minutes) min without a button press" end'
 }
 
 night() {
@@ -222,6 +230,7 @@ status) show_status ;;
 timer | pomodoro) timer "$@" ;;
 screen) screen "$@" ;;
 brightness) brightness "$@" ;;
+autooff) autooff "$@" ;;
 night) night "$@" ;;
 say) say "$@" ;;
 settings) request GET /api/v1/settings | jq . ;;

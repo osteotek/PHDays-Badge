@@ -54,6 +54,7 @@ static esp_err_t status_get(httpd_req_t *req) {
     cJSON_AddItemToObject(root, "timer", timer_json());
     cJSON_AddStringToObject(root, "screen", display_current_screen());
     cJSON_AddBoolToObject(root, "screen_on", display_screen_on());
+    cJSON_AddBoolToObject(root, "asleep", display_asleep());
     cJSON_AddBoolToObject(root, "night", display_night_active());
     cJSON_AddBoolToObject(root, "notifying", display_notifying());
     cJSON_AddNumberToObject(root, "battery", get_battery_level_percent());
@@ -77,6 +78,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req) {
     cJSON_Delete(json);
     if (error)
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, error);
+    display_wake(); // show the changed settings
     return settings_get_handler(req);
 }
 
@@ -105,6 +107,7 @@ static cJSON *screen_json(void) {
     cJSON *json = cJSON_CreateObject();
     cJSON_AddStringToObject(json, "screen", display_current_screen());
     cJSON_AddBoolToObject(json, "screen_on", display_screen_on());
+    cJSON_AddBoolToObject(json, "asleep", display_asleep());
     return json;
 }
 
@@ -121,8 +124,10 @@ static esp_err_t screen_post_handler(httpd_req_t *req) {
         display_set_screen(false);
     else if (action && strcmp(action, "toggle") == 0)
         display_toggle_screen();
-    else if (action && strcmp(action, "next") == 0)
+    else if (action && strcmp(action, "next") == 0) {
+        display_wake();
         display_next_screen();
+    }
     else
         known = false;
     cJSON_Delete(json);

@@ -10,10 +10,17 @@
 void display_init(void);   // before any other display call
 void display_task(void *); // render loop; pin to its own core
 
-void display_toggle_screen(void); // LEDs off/on; status images still show
+void display_toggle_screen(void); // LEDs off/on, or only wake from auto-off; status images still show
 void display_set_screen(bool on);
 void display_next_screen(void);   // skip to the next screen in the rotation
 bool display_screen_on(void);
+
+// Auto-off: the screen goes dark after the auto_off_minutes setting without
+// activity. Button presses, screen API actions, settings changes and messages
+// count as activity, and a running timer keeps the screen on. Returns true if
+// the screen was asleep.
+bool display_wake(void);
+bool display_asleep(void);
 bool display_night_active(void); // inside the night mode window
 const char *display_current_screen(void); // "clock", "weather" or "timer"
 

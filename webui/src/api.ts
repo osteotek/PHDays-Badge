@@ -15,6 +15,7 @@ export interface Status {
   timer: TimerState;
   screen: 'clock' | 'weather' | 'timer';
   screen_on: boolean;
+  asleep: boolean; // auto-off
   night: boolean;
   battery: number;
   battery_mv: number;
@@ -32,6 +33,7 @@ export interface Settings {
   show_weather: boolean;
   transitions: boolean;
   power_save: boolean;
+  auto_off_minutes: number; // 0 = never
   screen_seconds: number;
   brightness: number;
   timezone: string;

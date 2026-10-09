@@ -23,6 +23,7 @@ static const badge_settings_t DEFAULTS = {
     .power_save = true,
     .screen_seconds = 10,
     .brightness = 10,
+    .auto_off_minutes = 5,
     .timezone = "MSK-3",
     .focus_minutes = 25,
     .break_minutes = 5,
@@ -108,6 +109,7 @@ static const char *merge(badge_settings_t *s, const cJSON *json) {
         {"power_save", read_bool(json, "power_save", &s->power_save)},
         {"screen_seconds", read_int(json, "screen_seconds", 3, 120, &s->screen_seconds)},
         {"brightness", read_int(json, "brightness", 1, 15, &s->brightness)},
+        {"auto_off_minutes", read_int(json, "auto_off_minutes", 0, 120, &s->auto_off_minutes)},
         {"timezone", read_string(json, "timezone", s->timezone, sizeof(s->timezone), valid_timezone)},
         {"focus_minutes", read_int(json, "focus_minutes", 1, 180, &s->focus_minutes)},
         {"break_minutes", read_int(json, "break_minutes", 1, 60, &s->break_minutes)},
@@ -135,6 +137,7 @@ cJSON *settings_to_json(const badge_settings_t *s) {
     cJSON_AddBoolToObject(json, "power_save", s->power_save);
     cJSON_AddNumberToObject(json, "screen_seconds", s->screen_seconds);
     cJSON_AddNumberToObject(json, "brightness", s->brightness);
+    cJSON_AddNumberToObject(json, "auto_off_minutes", s->auto_off_minutes);
     cJSON_AddStringToObject(json, "timezone", s->timezone);
     cJSON_AddNumberToObject(json, "focus_minutes", s->focus_minutes);
     cJSON_AddNumberToObject(json, "break_minutes", s->break_minutes);
