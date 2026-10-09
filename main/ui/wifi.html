@@ -2,7 +2,7 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Wi-Fi · PHDays Badge</title>
+<title>Wi-Fi · Pixeldesk</title>
 <style>
   body{font:16px system-ui,sans-serif;background:#15161c;color:#eee;max-width:32rem;margin:3rem auto;padding:0 1.2rem;line-height:1.5}
   a{color:#acbaff} label{display:block;margin-top:1rem} input,button{box-sizing:border-box;width:100%;font:inherit;padding:.7rem;border-radius:.4rem;border:1px solid #777}
@@ -47,7 +47,7 @@ async function refresh() {
       initialized = true;
     }
     save.disabled = !state.can_configure;
-    if (!state.can_configure) message.textContent = 'To change these settings, join the badge’s phd2_… hotspot (it appears when home Wi-Fi is unavailable for 2 minutes) and open http://192.168.4.1/wifi.';
+    if (!state.can_configure) message.textContent = 'To change these settings, join the badge’s pixeldesk-… hotspot (it appears when home Wi-Fi is unavailable for 2 minutes) and open http://192.168.4.1/wifi.';
   } catch (error) {
     statusText.textContent = 'Badge unreachable. Reconnect to its Wi-Fi or reload this page from your home network.';
   }
@@ -68,7 +68,7 @@ form.addEventListener('submit', async event => {
     });
     if (!response.ok) throw new Error(await response.text());
     form.elements.password.value = '';
-    message.textContent = 'Saved. The badge is restarting and will join your home Wi-Fi; its hotspot turns off once connected.\nJoin your home Wi-Fi and open the badge’s address (your router lists it as phdays-badge).';
+    message.textContent = 'Saved. The badge is restarting and will join your home Wi-Fi; its hotspot turns off once connected.\nJoin your home Wi-Fi and open the badge’s address (pixeldesk.local, or pixeldesk in your router).';
   } catch (error) {
     restarting = false;
     save.disabled = false;

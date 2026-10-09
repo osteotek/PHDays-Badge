@@ -1,8 +1,8 @@
-# PHDays Badge: desk info display
+# Pixeldesk
 
 ![LAST0063](https://github.com/user-attachments/assets/c6ef8c73-12f9-4978-b324-96bd69605260)
 
-Firmware that turns the PHDays Fest badge by Positive Labs (ESP32, 10x10 RGB
+Pixeldesk is firmware that turns the PHDays Fest badge by Positive Labs (ESP32, 10x10 RGB
 matrix, piezo buzzer, three buttons, battery) into a small info display for the
 desk: a clock, the current weather and a Pomodoro timer, configured from a web
 page on the home network. It started from the original badge firmware, which
@@ -20,7 +20,7 @@ The badge rotates through the enabled screens, each for a configurable time:
 - **Weather**: an icon (sun, moon, cloud, rain, snow, storm, fog) at the top
   left and the temperature with a degree sign at the bottom right (two-digit
   frosts like −12 fill the row and drop the degree sign). In the second half of
-  its turn the screen shows today's forecast: the high above the low., from [Open-Meteo](https://open-meteo.com/) (no API key),
+  its turn the screen shows today's forecast: the high above the low. Weather comes from [Open-Meteo](https://open-meteo.com/) (no API key),
   refreshed every 15 minutes for the `[weather]` location in `wifi_secrets.ini`.
 - **Timer**: while a Pomodoro timer runs it takes over the screen: minutes left
   (seconds in the last minute) over a shrinking bar, red for focus and green for
@@ -32,7 +32,7 @@ can be turned off on the web page.
 
 **Messages** scroll across the screen, for example from CI or Home Assistant:
 `POST /api/v1/notify` with `{"text": "Build passed", "color": "#00ff00", "repeat": 2,
-"sound": true}` (color, repeat and sound are optional), `badge say "Build passed"`, or
+"sound": true}` (color, repeat and sound are optional), `pixeldesk say "Build passed"`, or
 the Message box on the web page. The font covers Latin and Russian letters
 (lowercase is shown in capitals), digits, common punctuation and `°`; other
 characters show as `?`. Messages
@@ -40,10 +40,10 @@ follow the screen switch and night mode, like the screens.
 
 **Night mode** dims the LEDs, or switches them off, between two times (for
 example 23:00 to 07:00) once the clock is set; it is configured on the web page or
-with `badge night 23:00 07:00 1`.
+with `pixeldesk night 23:00 07:00 1`.
 
 **Auto-off** switches the screen off after 5 minutes without a button press
-(a setting, 0 = never; `badge autooff 10`). Any button wakes it, and that first
+(a setting, 0 = never; `pixeldesk autooff 10`). Any button wakes it, and that first
 press only wakes it. Screen API actions, settings changes and messages also wake
 it, and a running timer keeps it on.
 
@@ -64,8 +64,8 @@ battery level.
 
 ## Web page
 
-Open `http://phdays-badge.local/` (mDNS), or the badge's IP address: the router
-lists it as `phdays-badge`, and it is printed on the USB serial console. The page shows the time, weather and timer
+Open `http://pixeldesk.local/` (mDNS), or the badge's IP address: the router
+lists it as `pixeldesk`, and it is printed on the USB serial console. The page shows the time, weather and timer
 with start/skip/stop buttons, and edits the settings: enabled screens, seconds per
 screen, brightness, auto-off, time zone, focus and break minutes, and the alert melody. The
 melodies section lists saved RTTTL melodies, previews them in the browser, plays
@@ -78,28 +78,28 @@ updates are fine), `POST timer` with `{"action": "start" | "stop" | "skip"}`, `P
 
 ## Command line
 
-`scripts/badge` controls the badge from a terminal (needs `curl` and `jq`):
+`scripts/pixeldesk` controls the badge from a terminal (needs `curl` and `jq`):
 
 ```sh
-scripts/badge status              # time, weather, timer, screen, battery
-scripts/badge timer start         # also: stop, skip, watch (live countdown)
-scripts/badge screen off          # also: on, toggle, next
-scripts/badge brightness 12
-scripts/badge autooff 10           # screen off after 10 idle minutes; 0 = never
-scripts/badge night 23:00 07:00 0  # LEDs off at night; also: night on|off
-scripts/badge set focus_minutes=50 break_minutes=10
-scripts/badge play Alert          # a saved melody, or RTTTL text
-scripts/badge say -c '#00ff00' "Build passed"
-scripts/badge update              # build and install the firmware over Wi-Fi
+scripts/pixeldesk status              # time, weather, timer, screen, battery
+scripts/pixeldesk timer start         # also: stop, skip, watch (live countdown)
+scripts/pixeldesk screen off          # also: on, toggle, next
+scripts/pixeldesk brightness 12
+scripts/pixeldesk autooff 10           # screen off after 10 idle minutes; 0 = never
+scripts/pixeldesk night 23:00 07:00 0  # LEDs off at night; also: night on|off
+scripts/pixeldesk set focus_minutes=50 break_minutes=10
+scripts/pixeldesk play Alert          # a saved melody, or RTTTL text
+scripts/pixeldesk say -c '#00ff00' "Build passed"
+scripts/pixeldesk update              # build and install the firmware over Wi-Fi
 ```
 
-The badge address comes from `-H` or `BADGE_HOST` (default `phdays-badge.local`). To use it
-from anywhere: `ln -s "$PWD/scripts/badge" ~/.local/bin/badge`.
+The badge address comes from `-H` or `PIXELDESK_HOST` (default `pixeldesk.local`). To use it
+from anywhere: `ln -s "$PWD/scripts/pixeldesk" ~/.local/bin/pixeldesk`.
 
 ## Wi-Fi
 
 The badge joins a 2.4 GHz WPA2-compatible home network from `wifi_secrets.ini`.
-Its open `phd2_…` hotspot is only a fallback:
+Its open `pixeldesk-…` hotspot is only a fallback:
 
 1. Copy `wifi_secrets.example.ini` to `wifi_secrets.ini` (gitignored) and fill in
    the network, a Wi-Fi update token and the weather location. The build compiles
@@ -145,7 +145,7 @@ at higher rates on macOS.
 After one USB flash, later builds can be installed over Wi-Fi:
 
 ```sh
-pio run -e badge-ota -t upload                          # badge at phdays-badge.local
+pio run -e badge-ota -t upload                          # badge at pixeldesk.local
 pio run -e badge-ota -t upload --upload-port <badge IP>
 ```
 
@@ -172,7 +172,7 @@ pio run -e badge-ota -t upload   # embed and install it
 ```
 
 For UI work, `npm run dev` in `webui/` starts a dev server that proxies the API to
-the badge (`BADGE_HOST=<address>` to use another one). `main/ui/wifi.html` (the hotspot Wi-Fi page) is
+the badge (`PIXELDESK_HOST=<address>` to use another one). `main/ui/wifi.html` (the hotspot Wi-Fi page) is
 plain HTML and not built from `webui/`.
 
 ### Tests

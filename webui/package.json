@@ -1,8 +1,8 @@
 {
-  "name": "phdays-badge-webui",
+  "name": "pixeldesk-webui",
   "private": true,
   "type": "module",
-  "description": "Settings page for the PHDays badge info display",
+  "description": "Settings page for Pixeldesk",
   "engines": {
     "node": ">=22.12"
   },

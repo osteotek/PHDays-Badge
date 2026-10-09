@@ -6,10 +6,8 @@
 #include "esp_timer.h"
 #include "home_wifi.h"
 #include <inttypes.h>
-#include <psa/crypto.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/types.h>
 
 #include "wifi.h"
 
@@ -37,7 +35,7 @@ static esp_timer_handle_t reconnect_timer;
 static esp_timer_handle_t fallback_timer;
 static wifi_config_t wifi_config_ap;
 
-unsigned char ESP_WIFI_SSID[16] = "phd2_1234567890";
+static unsigned char ESP_WIFI_SSID[16];
 
 static void schedule_reconnect(void) {
     if (home_wifi_configured && !esp_timer_is_active(reconnect_timer))
@@ -114,7 +112,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
         ESP_LOGI(TAG, "sta connected");
         // A link-local IPv6 address lets mDNS answer AAAA queries; without one,
-        // macOS waits about 5 s for each phdays-badge.local lookup.
+        // macOS waits about 5 s for each pixeldesk.local lookup.
         esp_netif_create_ip6_linklocal(sta_netif);
         esp_timer_stop(reconnect_timer);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -126,62 +124,13 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     }
 }
 
-uint32_t lenHelper(uint32_t x) {
-    if (x >= 1000000000)
-        return x;
-    if (x >= 100000000)
-        return x * 10;
-    if (x >= 10000000)
-        return x * 10;
-    if (x >= 1000000)
-        return x * 1000;
-    if (x >= 100000)
-        return x * 10000;
-    if (x >= 10000)
-        return x * 100000;
-    if (x >= 1000)
-        return x * 1000000;
-    if (x >= 100)
-        return x * 10000000;
-    if (x >= 10)
-        return x * 100000000;
-    return 1;
-}
-
-void getDeviceId() {
-    char *key = "someBadgeKey";
-
-    uint8_t mac_base[6] = {0};
-    esp_err_t ret = esp_efuse_mac_get_default(mac_base);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to get base MAC address from EFUSE BLK3. (%s)", esp_err_to_name(ret));
-    }
-
-    char *payload = (char *)mac_base;
-    u_char hmacResult[32];
-
-    // A MAC address is six binary bytes, not a NUL-terminated string. Hashing
-    // past it made the fallback hotspot name depend on unrelated stack data.
-    const size_t payloadLength = sizeof(mac_base);
-    const size_t keyLength = strlen(key);
-
-    // HMAC-SHA256(key, MAC) via PSA; mbedTLS 4 removed the mbedtls_md_hmac_* API.
-    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
-    psa_set_key_type(&attributes, PSA_KEY_TYPE_HMAC);
-    psa_set_key_algorithm(&attributes, PSA_ALG_HMAC(PSA_ALG_SHA_256));
-    psa_set_key_usage_flags(&attributes, PSA_KEY_USAGE_SIGN_MESSAGE);
-    psa_key_id_t key_id;
-    size_t hmacLength = 0;
-    psa_status_t status = psa_import_key(&attributes, (const uint8_t *)key, keyLength, &key_id);
-    if (status == PSA_SUCCESS) {
-        status = psa_mac_compute(key_id, PSA_ALG_HMAC(PSA_ALG_SHA_256), (const uint8_t *)payload, payloadLength, hmacResult, sizeof(hmacResult), &hmacLength);
-        psa_destroy_key(key_id);
-    }
-    ESP_ERROR_CHECK(status == PSA_SUCCESS ? ESP_OK : ESP_FAIL);
-
-    uint32_t ssid = lenHelper(hmacResult[0] | (hmacResult[1] << 8) | (hmacResult[2] << 16) | (hmacResult[3] << 24));
-
-    snprintf((char *)ESP_WIFI_SSID, sizeof(ESP_WIFI_SSID), "phd2_%lu", ssid);
+// Hotspot name: "pixeldesk-" and the last two MAC bytes, so nearby badges differ.
+static void set_hotspot_name(void) {
+    uint8_t mac[6] = {0};
+    esp_err_t err = esp_efuse_mac_get_default(mac);
+    if (err != ESP_OK)
+        ESP_LOGE(TAG, "Could not read the MAC address: %s", esp_err_to_name(err));
+    snprintf((char *)ESP_WIFI_SSID, sizeof(ESP_WIFI_SSID), "pixeldesk-%02x%02x", mac[4], mac[5]);
 }
 
 void wifi_init_softap(void) {
@@ -264,21 +213,21 @@ bool wifi_home_connected(void) { return home_connected; }
 
 bool wifi_hotspot_active(void) { return hotspot_active; }
 
-// Advertises phdays-badge.local and the web UI on every active interface.
+// Advertises pixeldesk.local and the web UI on every active interface.
 static void start_mdns(void) {
     esp_err_t err = mdns_init();
     if (err == ESP_OK)
         err = mdns_hostname_set(BADGE_HOSTNAME);
     if (err == ESP_OK)
-        err = mdns_instance_name_set("PHDays Badge");
+        err = mdns_instance_name_set("Pixeldesk");
     if (err == ESP_OK)
-        err = mdns_service_add("PHDays Badge", "_http", "_tcp", 80, NULL, 0);
+        err = mdns_service_add("Pixeldesk", "_http", "_tcp", 80, NULL, 0);
     if (err != ESP_OK)
         ESP_LOGE(TAG, "mDNS failed: %s", esp_err_to_name(err));
 }
 
 void initWiFi(void) {
-    getDeviceId();
+    set_hotspot_name();
     wifi_init_softap();
     start_mdns();
 }

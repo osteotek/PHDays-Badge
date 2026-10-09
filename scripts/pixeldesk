@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Control the PHDays badge info display from the terminal.
+# Control Pixeldesk from the terminal.
 # Needs curl and jq. Works with macOS's bash 3.2.
 
 set -euo pipefail
 
-HOST="${BADGE_HOST:-phdays-badge.local}"
+HOST="${PIXELDESK_HOST:-pixeldesk.local}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
     cat <<'EOF'
-Usage: badge [-H host] <command> [arguments]
+Usage: pixeldesk [-H host] <command> [arguments]
 
   status                  time, weather, timer, screen, battery, firmware
   timer [status]          Pomodoro timer state
@@ -29,7 +29,7 @@ Usage: badge [-H host] <command> [arguments]
   play <name|RTTTL>       play a saved melody by name, or RTTTL text
   update                  build and install the firmware over Wi-Fi (PlatformIO)
 
-The badge address comes from -H or $BADGE_HOST (default phdays-badge.local).
+The badge address comes from -H or $PIXELDESK_HOST (default pixeldesk.local).
 EOF
 }
 
