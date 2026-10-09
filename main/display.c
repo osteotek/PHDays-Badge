@@ -146,8 +146,6 @@ static bool draw_screens(int64_t now_us, Pixel *out) {
     return false;
 }
 
-// Sends the frame only when it changed: every refresh is a chance for Wi-Fi
-// interrupts to corrupt the WS2812 bit stream, and most frames repeat.
 static volatile bool night_active;
 
 // Night mode brightness inside its window (once the clock is set), else the
@@ -163,12 +161,33 @@ static int display_brightness(void) {
 
 bool display_night_active(void) { return night_active; }
 
+// The 100 WS2812s draw current even when black, so their supply (GPIO 26) is
+// switched off while the screen is dark and the frame resent once powered.
+static bool strip_powered = true;
+
+static void set_strip_power(bool on) {
+    if (on == strip_powered)
+        return;
+    gpio_set_level(LED_POWER_GPIO, on);
+    strip_powered = on;
+    if (on)
+        vTaskDelay(pdMS_TO_TICKS(2)); // let the LEDs start before sending data
+}
+
+// Sends the frame only when it changed: every refresh is a chance for Wi-Fi
+// interrupts to corrupt the WS2812 bit stream, and most frames repeat.
 static void push(const Pixel *pixels, bool on, int brightness) {
     static Pixel shown[DISPLAY_PIXELS];
     static bool have_shown;
+    if (!on) {
+        set_strip_power(false);
+        have_shown = false; // the LEDs lose their colours without power
+        return;
+    }
+    set_strip_power(true);
     Pixel next[DISPLAY_PIXELS];
     for (int i = 0; i < DISPLAY_PIXELS; i++) {
-        Pixel p = on ? pixels[i] : (Pixel){0, 0, 0};
+        Pixel p = pixels[i];
         next[i] = (Pixel){(uint8_t)(p.r * brightness / 100), (uint8_t)(p.g * brightness / 100), (uint8_t)(p.b * brightness / 100)};
     }
     if (have_shown && memcmp(next, shown, sizeof(next)) == 0)

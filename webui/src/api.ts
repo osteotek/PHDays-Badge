@@ -17,6 +17,7 @@ export interface Status {
   screen_on: boolean;
   night: boolean;
   battery: number;
+  battery_mv: number;
   app_version: string;
 }
 
@@ -30,6 +31,7 @@ export interface Settings {
   show_clock: boolean;
   show_weather: boolean;
   transitions: boolean;
+  power_save: boolean;
   screen_seconds: number;
   brightness: number;
   timezone: string;

@@ -1,5 +1,6 @@
 #include "buzzer.h"
 #include "esp_log.h"
+#include "esp_pm.h"
 #include "freertos/semphr.h"
 #include <ctype.h>
 #include <inttypes.h>
@@ -17,6 +18,8 @@
 static bool is_buzzer = true;
 // parse_rtttl uses shared buffers; the web server and the timer both call it.
 static SemaphoreHandle_t parse_lock;
+// The LEDC tone stops in light sleep; hold this while notes are queued.
+static esp_pm_lock_handle_t playing_lock;
 
 static const char *kTag = "buzzer";
 
@@ -82,7 +85,11 @@ void buzzer_task(void *param) {
             ESP_LOGD(kTag, "No new message, Stop beeping");
             buzzer_stop(buzzer);
             waitTime = portMAX_DELAY;
+            if (playing_lock)
+                esp_pm_lock_release(playing_lock);
         } else {
+            if (waitTime == portMAX_DELAY && playing_lock) // first note after silence
+                esp_pm_lock_acquire(playing_lock);
             ESP_LOGD(kTag, "Beep at %" PRIu32 " Hz for %" PRIu32 " ms", message.frequency, message.duration_ms);
             waitTime = pdMS_TO_TICKS(message.duration_ms);
             if (message.frequency == 0) {
@@ -150,6 +157,8 @@ BaseType_t buzzer_beep(Buzzer *buzzer, uint32_t frequency, uint32_t duration_ms)
 
 void init_buzzer() {
     parse_lock = xSemaphoreCreateMutex();
+    if (esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "buzzer", &playing_lock) != ESP_OK)
+        playing_lock = NULL;
     if (buzzer_init(&buzzer_handler, CONFIG_BUZZER, LEDC_AUTO_CLK, LEDC_LOW_SPEED_MODE, LEDC_TIMER_13_BIT, LEDC_TIMER_0, LEDC_CHANNEL_0, 0) != ESP_OK) {
         ESP_LOGE(kTag, "error init buzzer");
     }

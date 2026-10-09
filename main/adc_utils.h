@@ -13,3 +13,4 @@
 void init_adc();
 void sample_adc(void *arg);
 uint8_t get_battery_level_percent();
+int get_battery_voltage_mv(void);

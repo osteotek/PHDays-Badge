@@ -20,7 +20,7 @@ const describe = (error: unknown) => (error instanceof Error ? error.message : S
 
 function showStatus(status: Status) {
   const screen = `${status.screen}${status.screen_on ? '' : ' (screen off)'}${status.night ? ' (night mode)' : ''}`;
-  $('#summary').textContent = `Firmware ${status.app_version} · battery ${status.battery}% · showing ${screen}`;
+  $('#summary').textContent = `Firmware ${status.app_version} · battery ${status.battery}% (${(status.battery_mv / 1000).toFixed(2)} V) · showing ${screen}`;
   $('#now-time').textContent = status.time?.slice(0, 5) ?? '--:--';
   const weather = status.weather;
   if (weather.valid && weather.code !== undefined && weather.temperature !== undefined) {
@@ -69,6 +69,7 @@ function fillSettings(settings: Settings) {
   field<HTMLInputElement>('show_clock').checked = settings.show_clock;
   field<HTMLInputElement>('show_weather').checked = settings.show_weather;
   field<HTMLInputElement>('transitions').checked = settings.transitions;
+  field<HTMLInputElement>('power_save').checked = settings.power_save;
   field<HTMLInputElement>('screen_seconds').value = String(settings.screen_seconds);
   field<HTMLInputElement>('brightness').value = String(settings.brightness);
   field<HTMLInputElement>('timezone').value = settings.timezone;
@@ -88,6 +89,7 @@ function readSettings(): Partial<Settings> {
     show_clock: field<HTMLInputElement>('show_clock').checked,
     show_weather: field<HTMLInputElement>('show_weather').checked,
     transitions: field<HTMLInputElement>('transitions').checked,
+    power_save: field<HTMLInputElement>('power_save').checked,
     screen_seconds: Number(field<HTMLInputElement>('screen_seconds').value),
     brightness: Number(field<HTMLInputElement>('brightness').value),
     timezone: field<HTMLInputElement>('timezone').value.trim(),

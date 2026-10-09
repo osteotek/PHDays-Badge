@@ -57,6 +57,7 @@ static esp_err_t status_get(httpd_req_t *req) {
     cJSON_AddBoolToObject(root, "night", display_night_active());
     cJSON_AddBoolToObject(root, "notifying", display_notifying());
     cJSON_AddNumberToObject(root, "battery", get_battery_level_percent());
+    cJSON_AddNumberToObject(root, "battery_mv", get_battery_voltage_mv());
     cJSON_AddStringToObject(root, "app_version", esp_app_get_description()->version);
     return http_send_json(req, root);
 }

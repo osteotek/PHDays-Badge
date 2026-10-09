@@ -16,8 +16,13 @@ adc_oneshot_unit_handle_t adc1_handle;
 bool do_calibration1_chan0;
 adc_cali_handle_t adc1_cali_chan0_handle = NULL;
 
+// Battery voltage, smoothed (exponential average of 16-read samples).
+static int battery_mv;
+
+int get_battery_voltage_mv(void) { return battery_mv; }
+
 uint8_t get_battery_level_percent() {
-    int real_voltage = voltage / VOLTAGE_DIVIDER_RATIO;
+    int real_voltage = battery_mv;
     if (real_voltage >= BATT_VOLTAGE_MAX)
         return 100;
     if (real_voltage <= BATT_VOLTAGE_MIN)
@@ -64,11 +69,17 @@ static void example_adc_calibration_deinit(adc_cali_handle_t handle) {
 // Continuously sample ADC1
 void sample_adc(void *arg) {
     while (1) {
-        ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, EXAMPLE_ADC1_CHAN0, &adc_raw));
-        // ESP_LOGI(TAG, "ADC%d Channel[%d] Raw Data: %d", ADC_UNIT_1 + 1, EXAMPLE_ADC1_CHAN0, adc_raw);
-        if (do_calibration1_chan0) {
-            ESP_ERROR_CHECK(adc_cali_raw_to_voltage(adc1_cali_chan0_handle, adc_raw, &voltage));
-            // ESP_LOGI(TAG, "ADC Voltage: %d mV, Battery Level: %d", real_voltage, batt_percent);
+        int sum = 0, count = 0;
+        for (int i = 0; i < 16; i++) {
+            if (adc_oneshot_read(adc1_handle, EXAMPLE_ADC1_CHAN0, &adc_raw) == ESP_OK && do_calibration1_chan0 &&
+                adc_cali_raw_to_voltage(adc1_cali_chan0_handle, adc_raw, &voltage) == ESP_OK) {
+                sum += voltage;
+                count++;
+            }
+        }
+        if (count) {
+            int mv = (int)(sum / count / VOLTAGE_DIVIDER_RATIO);
+            battery_mv = battery_mv ? (battery_mv * 3 + mv) / 4 : mv;
         }
         vTaskDelay(pdMS_TO_TICKS(5000));
     }

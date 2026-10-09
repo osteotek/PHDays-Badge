@@ -82,7 +82,7 @@ show_status() {
             else "no location in wifi_secrets.ini" end)",
         "Timer:     \(.timer | timer_text)",
         "Screen:    \(.screen)\(if .screen_on then "" else " (LEDs off)" end)\(if .night then " (night mode)" else "" end)",
-        "Battery:   \(.battery)%",
+        "Battery:   \(.battery)% (\(.battery_mv) mV)",
         "Firmware:  \(.app_version)"'
 }
 

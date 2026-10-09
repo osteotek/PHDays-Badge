@@ -55,7 +55,8 @@ static void screen_double_click_cb(void *arg, void *usr_data) { display_next_scr
 
 static button_handle_t new_button(int gpio) {
     const button_config_t config = {0};
-    const button_gpio_config_t gpio_config = {.gpio_num = gpio, .active_level = BUTTON_ACTIVE_LEVEL};
+    // Power save: GPIO wake-up instead of polling, so the chip can light-sleep.
+    const button_gpio_config_t gpio_config = {.gpio_num = gpio, .active_level = BUTTON_ACTIVE_LEVEL, .enable_power_save = true};
     button_handle_t button = NULL;
     ESP_ERROR_CHECK(iot_button_new_gpio_device(&config, &gpio_config, &button));
     return button;

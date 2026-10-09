@@ -2,13 +2,14 @@
 
 Usage: ota_upload.py FIRMWARE_BIN HOST
 The token comes from [ota] token in wifi_secrets.ini next to platformio.ini.
+The upload runs through curl: on macOS, Local Network privacy can block Python
+from reaching the badge while curl is allowed.
 """
 import configparser
-import http.client
 import os
+import shutil
+import subprocess
 import sys
-
-CHUNK = 16 * 1024
 
 
 def main():
@@ -19,36 +20,20 @@ def main():
     token = config.get("ota", "token", fallback="")
     if not token:
         sys.exit(f"No [ota] token in {secrets}")
+    curl = shutil.which("curl") or sys.exit("curl not found")
 
     size = os.path.getsize(firmware)
-    print(f"Uploading {firmware} ({size} bytes) to http://{host}/api/v1/ota")
-    conn = http.client.HTTPConnection(host, 80, timeout=120)
-    conn.putrequest("POST", "/api/v1/ota")
-    conn.putheader("Authorization", f"Bearer {token}")
-    conn.putheader("Content-Type", "application/octet-stream")
-    conn.putheader("Content-Length", str(size))
-    conn.endheaders()
-    sent = 0
-    try:
-        with open(firmware, "rb") as f:
-            while chunk := f.read(CHUNK):
-                conn.send(chunk)
-                sent += len(chunk)
-                print(f"\r  {sent * 100 // size:3d}%", end="", flush=True)
-        print()
-    except OSError as e:
-        # The badge may reject the upload (bad token, wrong image) and close the
-        # connection early; its response explains why.
-        print(f"\n  connection closed after {sent} bytes ({e})")
-    try:
-        response = conn.getresponse()
-        body = response.read().decode("utf-8", "replace")
-    except OSError as e:
-        # The upload may still have succeeded; the reply can be lost on a weak link.
-        sys.exit(f"No reply from the badge ({e}). If it restarted, the update may have installed;"
-                 f" check http://{host}/api/v1/status")
-    print(f"Badge: {response.status} {body}")
-    sys.exit(0 if response.status == 200 else 1)
+    print(f"Uploading {firmware} ({size} bytes) to http://{host}/api/v1/ota", flush=True)
+    # -4: the badge also announces IPv6 addresses over mDNS, which are not
+    # always routable from the computer. The token goes in via stdin, not argv.
+    result = subprocess.run(
+        [curl, "-4", "--fail-with-body", "--progress-bar", "--max-time", "180", "-X", "POST", "-H", "@-",
+         "-H", "Content-Type: application/octet-stream", "--data-binary", f"@{firmware}", f"http://{host}/api/v1/ota"],
+        input=f"Authorization: Bearer {token}\n", text=True, stdout=subprocess.PIPE)
+    print(f"Badge: {result.stdout.strip()}")
+    if result.returncode != 0:
+        sys.exit(f"Upload failed (curl exit {result.returncode}). If the badge restarted, the update may have "
+                 f"installed; check http://{host}/api/v1/status")
 
 
 if __name__ == "__main__":

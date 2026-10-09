@@ -13,6 +13,7 @@ typedef struct {
     bool show_clock;
     bool show_weather;
     bool transitions; // Matrix rain between screens
+    bool power_save;  // automatic light sleep (slightly slower web page)
     uint8_t screen_seconds; // time per screen in the rotation
     uint8_t brightness;     // 1-15
     char timezone[SETTINGS_TIMEZONE_MAX]; // POSIX TZ, e.g. "MSK-3"

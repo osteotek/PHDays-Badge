@@ -1,6 +1,7 @@
 #include "settings.h"
 
 #include "esp_log.h"
+#include "power.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "nvs.h"
@@ -19,6 +20,7 @@ static const badge_settings_t DEFAULTS = {
     .show_clock = true,
     .show_weather = true,
     .transitions = true,
+    .power_save = true,
     .screen_seconds = 10,
     .brightness = 10,
     .timezone = "MSK-3",
@@ -103,6 +105,7 @@ static const char *merge(badge_settings_t *s, const cJSON *json) {
         {"show_clock", read_bool(json, "show_clock", &s->show_clock)},
         {"show_weather", read_bool(json, "show_weather", &s->show_weather)},
         {"transitions", read_bool(json, "transitions", &s->transitions)},
+        {"power_save", read_bool(json, "power_save", &s->power_save)},
         {"screen_seconds", read_int(json, "screen_seconds", 3, 120, &s->screen_seconds)},
         {"brightness", read_int(json, "brightness", 1, 15, &s->brightness)},
         {"timezone", read_string(json, "timezone", s->timezone, sizeof(s->timezone), valid_timezone)},
@@ -129,6 +132,7 @@ cJSON *settings_to_json(const badge_settings_t *s) {
     cJSON_AddBoolToObject(json, "show_clock", s->show_clock);
     cJSON_AddBoolToObject(json, "show_weather", s->show_weather);
     cJSON_AddBoolToObject(json, "transitions", s->transitions);
+    cJSON_AddBoolToObject(json, "power_save", s->power_save);
     cJSON_AddNumberToObject(json, "screen_seconds", s->screen_seconds);
     cJSON_AddNumberToObject(json, "brightness", s->brightness);
     cJSON_AddStringToObject(json, "timezone", s->timezone);
@@ -206,6 +210,7 @@ void settings_init(void) {
         nvs_close(handle);
     }
     apply_timezone(current.timezone);
+    power_apply(current.power_save);
     ESP_LOGI(TAG, "Time zone %s, %u s per screen", current.timezone, current.screen_seconds);
 }
 
@@ -227,9 +232,12 @@ const char *settings_update_json(const cJSON *json) {
     badge_settings_t updated = current;
     const char *error = merge(&updated, json);
     if (!error) {
+        bool power_changed = updated.power_save != current.power_save;
         current = updated;
         save_locked();
         apply_timezone(current.timezone);
+        if (power_changed)
+            power_apply(current.power_save);
     }
     xSemaphoreGive(lock);
     return error;
