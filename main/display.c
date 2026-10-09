@@ -187,13 +187,16 @@ static void update_auto_off(void) {
     asleep = settings.auto_off_minutes && now - last_activity_ms >= settings.auto_off_minutes * 60000u;
 }
 
-// The 100 WS2812s draw current even when black, so their supply (GPIO 26) is
-// switched off while the screen is dark and the frame resent once powered.
+// GPIO 26 switches the LED supply off while the screen is dark, and the frame
+// is resent once it is back. Switching it off still leaves the LEDs some power
+// (they keep showing the last frame, only dimmer), so they are blanked first.
 static bool strip_powered = true;
 
 static void set_strip_power(bool on) {
     if (on == strip_powered)
         return;
+    if (!on)
+        led_strip_clear(led_strip);
     gpio_set_level(LED_POWER_GPIO, on);
     strip_powered = on;
     if (on)

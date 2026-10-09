@@ -49,8 +49,8 @@ it, and a running timer keeps it on.
 
 **Battery**: power saving (on by default, a setting) runs the CPU at 80-160 MHz
 with automatic light sleep between frames and wakes on button presses instead of
-polling them; the LED supply is switched off while the screen is dark, since the
-WS2812s draw current even when black. The web page may answer a little more
+polling them; while the screen is dark the LEDs are blanked and their supply is
+switched off. The web page may answer a little more
 slowly with power saving on.
 
 Status images briefly replace the screens: update progress and result, and the
